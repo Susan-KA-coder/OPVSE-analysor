@@ -189,39 +189,42 @@ def render_tab(tab_name: str) -> None:
 
     # 3) Analysis options for next-stage business evaluation.
     st.markdown("### Analysis Options")
-    st.caption("Enable an option, then choose one or multiple values (including all values).")
+    st.caption("Step 1: choose options. Step 2: choose one or more values for each selected option.")
 
-    option_definitions = [
-        ("Type of classification", ["Minor", "Major"]),
-        ("Deviation Progress", ["Cancelled", "Close", "Ongoing"]),
-        ("Summary", ["Yes", "No"]),
-        ("Impact on PPVR", ["Yes", "No"]),
-        ("Root cause", ["Supplier", "Equipment", "Human cause", "Procedure"]),
-    ]
+    option_definitions = {
+        "Type of classification": ["Minor", "Major"],
+        "Deviation Progress": ["Cancelled", "Close", "Ongoing"],
+        "Summary": ["Yes", "No"],
+        "Impact on PPVR": ["Yes", "No"],
+        "Root cause": ["Supplier", "Equipment", "Human cause", "Procedure"],
+    }
+
+    selected_option_names = st.multiselect(
+        "Select analysis options",
+        list(option_definitions.keys()),
+        default=[],
+        key=f"selected_option_names_{tab_name}",
+    )
 
     selected_analysis_options: list[dict[str, str]] = []
-    for option_label, option_values in option_definitions:
-        option_token = option_label.lower().replace(" ", "_")
-        enabled = st.checkbox(
-            f"Use {option_label}",
-            value=False,
-            key=f"{option_token}_enabled_{tab_name}",
-        )
+    for option_name in option_definitions:
+        values_for_option = option_definitions[option_name]
+        option_token = option_name.lower().replace(" ", "_")
 
         selected_values: list[str] = []
-        if enabled:
+        if option_name in selected_option_names:
             selected_values = st.multiselect(
-                option_label,
-                option_values,
-                default=option_values,
+                f"{option_name} values",
+                values_for_option,
+                default=values_for_option,
                 key=f"{option_token}_values_{tab_name}",
             )
 
         selected_analysis_options.append(
             {
-                "Option": option_label,
-                "Status": "Enabled" if enabled else "Disabled",
-                "Selection": ", ".join(selected_values) if selected_values else "Not selected",
+                "Option": option_name,
+                "Status": "Selected" if option_name in selected_option_names else "Not selected",
+                "Selection": ", ".join(selected_values) if selected_values else "No value selected",
             }
         )
 

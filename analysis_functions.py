@@ -231,6 +231,39 @@ def filter_by_target_line(
 	return dataframe[mask].reset_index(drop=True), removed
 
 
+def filter_by_classification(
+	dataframe: pd.DataFrame,
+	selected_values: list[str],
+) -> tuple[pd.DataFrame, int, str | None, dict[str, int]]:
+	"""Filter rows by classification column to match selected values (Minor/Major).
+
+	Args:
+		dataframe: Source dataset (already filtered by timeline and target line).
+		selected_values: List of classification values to keep (e.g., ["Minor", "Major"]).
+
+	Returns:
+		Tuple of (filtered_dataframe, removed_row_count, matched_column_name_or_None, classification_counts).
+	"""
+	if not selected_values:
+		return dataframe, 0, None, {}
+
+	classification_col = find_column(
+		dataframe,
+		["classification", "type of classification", "type_of_classification", "class", "type"],
+	)
+	if classification_col is None:
+		return dataframe, 0, None, {}
+
+	# Get counts before filtering
+	classification_counts = dataframe[classification_col].value_counts().to_dict()
+
+	# Create mask for rows matching selected values (case-insensitive)
+	mask = dataframe[classification_col].astype(str).str.lower().isin([val.lower() for val in selected_values])
+	removed = int((~mask).sum())
+	
+	return dataframe[mask].reset_index(drop=True), removed, classification_col, classification_counts
+
+
 def build_text_analysis(text: str) -> dict[str, Any]:
 	"""Generate simple text analysis for PDF and Word uploads.
 

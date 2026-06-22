@@ -26,6 +26,7 @@ import streamlit as st
 from analysis_functions import (
     SUPPORTED_FILE_TYPES,
     build_analysis_summary,
+    filter_by_classification,
     filter_by_target_line,
     filter_by_timeline,
     get_column_statistics,
@@ -231,14 +232,14 @@ def render_tab(tab_name: str) -> None:
                 selected_values = st.multiselect(
                     f"{option_name} values",
                     options=values_for_option,
-                    default=values_for_option,
+                    default=[],
                     key=f"{option_token}_values_{tab_name}",
                 )
             else:
                 selected_values = st.multiselect(
                     f"{option_name} values",
                     options=values_for_option,
-                    default=values_for_option,
+                    default=[],
                     key=f"{option_token}_values_{tab_name}",
                 )
 
@@ -287,7 +288,20 @@ def render_tab(tab_name: str) -> None:
     )
 
     # 5) Apply target-line filter on the already timeline-filtered data.
-    df_final, removed_target = filter_by_target_line(df_after_timeline, target_line)
+    df_after_target, removed_target = filter_by_target_line(df_after_timeline, target_line)
+
+    # 6) Extract classification values from selected options and apply filter.
+    classification_values = []
+    for option in selected_analysis_options:
+        if option["Option"] == "Type of classification":
+            selection_text = option["Selection"]
+            if selection_text != "No value selected":
+                classification_values = [val.strip() for val in selection_text.split(",")]
+            break
+    
+    df_final, removed_classification, classification_col, classification_counts = filter_by_classification(
+        df_after_target, classification_values
+    )
 
     # -------------------------------
     # SECTION D: RESULTS TO USER
@@ -295,9 +309,6 @@ def render_tab(tab_name: str) -> None:
     # 6) Show evaluation results and filtered output.
     st.markdown("---")
     st.markdown("### Result of Input Evaluation")
-
-    st.markdown("#### Selected Analysis Options")
-    st.table(selected_analysis_options)
 
     if date_col is None:
         st.warning(
@@ -315,16 +326,38 @@ def render_tab(tab_name: str) -> None:
         None,
     )
 
-    summary_col1, summary_col2, summary_col3, summary_col4 = st.columns(4)
-    # Four KPI cards summarize the filtering outcome.
+    summary_col1, summary_col2, summary_col3, summary_col4, summary_col5 = st.columns(5)
+    # Five KPI cards summarize the filtering outcome.
     summary_col1.metric("Total records in file", total_rows)
     summary_col2.metric("Removed — outside timeline", removed_timeline)
     summary_col3.metric("Removed — no target line match", removed_target)
-    summary_col4.metric("Records kept for analysis", len(df_final))
+    summary_col4.metric("Removed — classification filter", removed_classification)
+    summary_col5.metric("Records kept for analysis", len(df_final))
 
     if len(df_final) == 0:
         st.error("No records remain after filtering. Check your timeline and target line settings.")
         return
+
+    # Display classification breakdown if the classification column was found.
+    if classification_col and classification_counts:
+        st.markdown("#### Classification Summary")
+        classification_summary = [
+            {"Classification": key, "Count": value}
+            for key, value in classification_counts.items()
+        ]
+        st.table(classification_summary)
+
+    # Display selected classification results if user selected specific types.
+    if classification_values and classification_col:
+        st.markdown("#### Selected Classification Results")
+        selected_classification_results = []
+        for selected_type in classification_values:
+            # Count records of this type in the final filtered dataframe
+            count = (df_final[classification_col].astype(str).str.lower() == selected_type.lower()).sum()
+            selected_classification_results.append(
+                {"Classification Type": selected_type, "Records": int(count)}
+            )
+        st.table(selected_classification_results)
 
     if dv_col:
         # Show only DV identifiers as a compact quick-check list.

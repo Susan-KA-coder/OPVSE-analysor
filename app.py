@@ -189,29 +189,44 @@ def render_tab(tab_name: str) -> None:
 
     # 3) Analysis options for next-stage business evaluation.
     st.markdown("### Analysis Options")
-    st.caption("For each option: choose Yes/No with radio button. If Yes, choose one or more values.")
+    st.caption("Select the options you want to use. For Summary and Impact on PPVR: selected means Yes, not selected means No.")
 
     option_definitions = {
         "Type of classification": ["Minor", "Major"],
         "Deviation Progress": ["Cancelled", "Close", "Ongoing"],
-        "Summary": ["Yes", "No"],
-        "Impact on PPVR": ["Yes", "No"],
         "Root cause": ["Supplier", "Equipment", "Human cause", "Procedure"],
     }
 
+    binary_options = ["Summary", "Impact on PPVR"]
+
     selected_analysis_options: list[dict[str, str]] = []
+
+    for option_name in binary_options:
+        option_token = option_name.lower().replace(" ", "_")
+        is_selected = st.checkbox(
+            option_name,
+            value=False,
+            key=f"{option_token}_selected_{tab_name}",
+        )
+        selected_analysis_options.append(
+            {
+                "Option": option_name,
+                "Status": "Selected" if is_selected else "Not selected",
+                "Selection": "Yes" if is_selected else "No",
+            }
+        )
+
     for option_name, values_for_option in option_definitions.items():
         option_token = option_name.lower().replace(" ", "_")
 
-        use_option = st.radio(
-            f"Use {option_name}?",
-            options=["No", "Yes"],
-            horizontal=True,
+        is_selected = st.checkbox(
+            f"Use {option_name}",
+            value=False,
             key=f"use_{option_token}_{tab_name}",
         )
 
         selected_values: list[str] = []
-        if use_option == "Yes":
+        if is_selected:
             selected_values = st.multiselect(
                 f"{option_name} values",
                 options=values_for_option,
@@ -222,7 +237,7 @@ def render_tab(tab_name: str) -> None:
         selected_analysis_options.append(
             {
                 "Option": option_name,
-                "Status": "Selected" if use_option == "Yes" else "Not selected",
+                "Status": "Selected" if is_selected else "Not selected",
                 "Selection": ", ".join(selected_values) if selected_values else "No value selected",
             }
         )

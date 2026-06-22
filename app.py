@@ -189,33 +189,40 @@ def render_tab(tab_name: str) -> None:
 
     # 3) Analysis options for next-stage business evaluation.
     st.markdown("### Analysis Options")
-    opt_col1, opt_col2 = st.columns(2)
-    with opt_col1:
-        classification_type = st.selectbox(
-            "Type of classification",
-            ["Minor", "Major"],
-            key=f"classification_type_{tab_name}",
+    st.caption("Enable an option, then choose one or multiple values (including all values).")
+
+    option_definitions = [
+        ("Type of classification", ["Minor", "Major"]),
+        ("Deviation Progress", ["Cancelled", "Close", "Ongoing"]),
+        ("Summary", ["Yes", "No"]),
+        ("Impact on PPVR", ["Yes", "No"]),
+        ("Root cause", ["Supplier", "Equipment", "Human cause", "Procedure"]),
+    ]
+
+    selected_analysis_options: list[dict[str, str]] = []
+    for option_label, option_values in option_definitions:
+        option_token = option_label.lower().replace(" ", "_")
+        enabled = st.checkbox(
+            f"Use {option_label}",
+            value=False,
+            key=f"{option_token}_enabled_{tab_name}",
         )
-        deviation_progress = st.selectbox(
-            "Deviation Progress",
-            ["Cancelled", "Close", "Ongoing"],
-            key=f"deviation_progress_{tab_name}",
-        )
-        summary_required = st.selectbox(
-            "Summary",
-            ["Yes", "No"],
-            key=f"summary_required_{tab_name}",
-        )
-    with opt_col2:
-        impact_on_ppvr = st.selectbox(
-            "Impact on PPVR",
-            ["Yes", "No"],
-            key=f"impact_on_ppvr_{tab_name}",
-        )
-        root_cause = st.selectbox(
-            "Root cause",
-            ["Supplier", "Equipment", "Human cause", "Procedure"],
-            key=f"root_cause_{tab_name}",
+
+        selected_values: list[str] = []
+        if enabled:
+            selected_values = st.multiselect(
+                option_label,
+                option_values,
+                default=option_values,
+                key=f"{option_token}_values_{tab_name}",
+            )
+
+        selected_analysis_options.append(
+            {
+                "Option": option_label,
+                "Status": "Enabled" if enabled else "Disabled",
+                "Selection": ", ".join(selected_values) if selected_values else "Not selected",
+            }
         )
 
     # 4) File upload
@@ -265,15 +272,7 @@ def render_tab(tab_name: str) -> None:
     st.markdown("### Result of Input Evaluation")
 
     st.markdown("#### Selected Analysis Options")
-    st.table(
-        [
-            {"Option": "Type of classification", "Selection": classification_type},
-            {"Option": "Deviation Progress", "Selection": deviation_progress},
-            {"Option": "Summary", "Selection": summary_required},
-            {"Option": "Impact on PPVR", "Selection": impact_on_ppvr},
-            {"Option": "Root cause", "Selection": root_cause},
-        ]
-    )
+    st.table(selected_analysis_options)
 
     if date_col is None:
         st.warning(

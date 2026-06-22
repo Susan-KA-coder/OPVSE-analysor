@@ -9,6 +9,9 @@ Each tab allows users to upload a supported file and enter timeline/target data.
 
 from __future__ import annotations
 
+import re
+from datetime import date, timedelta
+
 import streamlit as st
 
 from analysis_functions import (
@@ -28,18 +31,41 @@ def render_tab(tab_name: str) -> None:
     """
     st.subheader(f"{tab_name} Input")
 
-    timeline = st.text_input(
-        label="Timeline",
-        key=f"timeline_{tab_name}",
-        placeholder="Example: Week 28, 2026",
-        help="Enter timeline information for this record.",
-    )
-    target_line = st.text_input(
-        label="Target line",
+    col1, col2 = st.columns(2)
+    with col1:
+        timeline_start = st.date_input(
+            label="Timeline start date",
+            value=date.today() - timedelta(days=365),
+            key=f"timeline_start_{tab_name}",
+            help="Select the start date of the analysis period.",
+        )
+    with col2:
+        timeline_end = st.date_input(
+            label="Timeline end date",
+            value=date.today(),
+            key=f"timeline_end_{tab_name}",
+            help="Select the end date of the analysis period.",
+        )
+
+    if timeline_start > timeline_end:
+        st.error("Start date must be before end date.")
+        return
+
+    timeline = f"{timeline_start.strftime('%d %b %Y')} to {timeline_end.strftime('%d %b %Y')}"
+
+    target_line_raw = st.text_input(
+        label="Target line (format: DF07.01)",
         key=f"target_{tab_name}",
-        placeholder="Example: Production Line 4",
-        help="Enter the target line for this analysis.",
+        placeholder="Example: DF07.01",
+        help="Enter target line in format DF followed by two digits, a dot, and two digits. Example: DF07.01",
     )
+
+    TARGET_PATTERN = re.compile(r"^DF\d{2}\.\d{2}$")
+    if target_line_raw and not TARGET_PATTERN.match(target_line_raw):
+        st.warning("Target line must follow the format DF07.01 (e.g. DF12.03).")
+        target_line = ""
+    else:
+        target_line = target_line_raw
 
     uploaded_file = st.file_uploader(
         "Upload file (CSV, Excel, PDF, Word)",
@@ -58,6 +84,8 @@ def render_tab(tab_name: str) -> None:
         {
             "tab": tab_name,
             "timeline": timeline,
+            "timeline_start": str(timeline_start),
+            "timeline_end": str(timeline_end),
             "target_line": target_line,
             "file_name": uploaded_file.name,
             "file_type": parsed["file_type"],

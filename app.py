@@ -16,6 +16,7 @@ Code map:
 from __future__ import annotations
 
 # Standard library imports used for input validation and default dates.
+import os
 import re
 from datetime import date, timedelta
 
@@ -26,12 +27,14 @@ import streamlit as st
 from analysis_functions import (
     SUPPORTED_FILE_TYPES,
     build_analysis_summary,
+    evaluate_ppvr_impact_with_llm,
     filter_by_classification,
     filter_by_deviation_progress,
     filter_by_target_line,
     filter_by_timeline,
     get_column_statistics,
     parse_uploaded_file,
+    summarize_selected_root_causes,
 )
 
 # Project-local data dictionary used in the field guidance expander.
@@ -133,6 +136,13 @@ def render_text_analysis(parsed: dict) -> None:
         key="preview_text",
         label_visibility="collapsed",
     )
+
+
+def get_runtime_setting(name: str, default: str = "") -> str:
+    """Read a setting from Streamlit secrets first, then environment variables."""
+    if name in st.secrets:
+        return str(st.secrets[name])
+    return os.getenv(name, default)
 
 
 def render_tab(tab_name: str) -> None:
@@ -312,9 +322,47 @@ def render_tab(tab_name: str) -> None:
             if selection_text != "No value selected":
                 deviation_progress_values = [val.strip() for val in selection_text.split(",")]
             break
+
+    root_cause_values = []
+    ppvr_analysis_selected = False
+    for option in selected_analysis_options:
+        if option["Option"] == "Root cause":
+            selection_text = option["Selection"]
+            if selection_text != "No value selected":
+                root_cause_values = [val.strip() for val in selection_text.split(",")]
+        if option["Option"] == "Impact on PPVR":
+            ppvr_analysis_selected = option["Selection"] == "Yes"
     
     df_final, removed_deviation_progress, lifecycle_col, progress_counts = filter_by_deviation_progress(
         df_after_classification, deviation_progress_values
+    )
+
+    ppvr_impact_summary, ppvr_text_columns = ({}, [])
+    ppvr_evaluation_error = ""
+    if ppvr_analysis_selected:
+        llm_api_key = get_runtime_setting("PPVR_LLM_API_KEY") or get_runtime_setting("OPENAI_API_KEY")
+        llm_model = get_runtime_setting("PPVR_LLM_MODEL", "gpt-4.1-mini")
+        llm_base_url = get_runtime_setting("PPVR_LLM_BASE_URL") or get_runtime_setting("OPENAI_BASE_URL")
+
+        if llm_api_key:
+            try:
+                with st.spinner("Evaluating PPVR impact with the LLM..."):
+                    ppvr_impact_summary, ppvr_text_columns = evaluate_ppvr_impact_with_llm(
+                        df_final,
+                        api_key=llm_api_key,
+                        model=llm_model,
+                        base_url=llm_base_url or None,
+                    )
+            except Exception as exc:
+                ppvr_evaluation_error = str(exc)
+        else:
+            ppvr_evaluation_error = (
+                "PPVR LLM settings are not configured. Add PPVR_LLM_API_KEY and optionally "
+                "PPVR_LLM_MODEL / PPVR_LLM_BASE_URL in Streamlit secrets or environment variables."
+            )
+
+    root_cause_summary, root_cause_col = summarize_selected_root_causes(
+        df_final, root_cause_values
     )
 
     # -------------------------------
@@ -378,13 +426,52 @@ def render_tab(tab_name: str) -> None:
     if deviation_progress_values and lifecycle_col:
         st.markdown("#### Selected Deviation Progress Results")
         selected_progress_results = []
+        lifecycle_lower = df_final[lifecycle_col].astype(str).str.lower()
         for selected_progress in deviation_progress_values:
-            # Count records of this progress type in the final filtered dataframe
-            count = (df_final[lifecycle_col].astype(str).str.lower() == selected_progress.lower()).sum()
+            display_progress = selected_progress
+            if selected_progress.lower() == "ongoing":
+                count = (~(
+                    lifecycle_lower.str.contains("closed", na=False)
+                    | lifecycle_lower.str.contains("cancelled", na=False)
+                )).sum()
+                display_progress = "Ongoing (not Closed / Cancelled)"
+            else:
+                count = lifecycle_lower.str.contains(
+                    selected_progress.lower(),
+                    na=False,
+                    regex=False,
+                ).sum()
             selected_progress_results.append(
-                {"Deviation Progress": selected_progress, "Records": int(count)}
+                {"Deviation Progress": display_progress, "Fields": int(count)}
             )
         st.table(selected_progress_results)
+
+    if ppvr_analysis_selected:
+        st.markdown("#### PPVR Impact Evaluation")
+        if ppvr_impact_summary:
+            ppvr_results = [
+                {"PPVR Assessment": label, "Fields": value}
+                for label, value in ppvr_impact_summary.items()
+            ]
+            st.table(ppvr_results)
+            st.caption(
+                "LLM review based on text in: " + ", ".join(ppvr_text_columns)
+            )
+        elif ppvr_evaluation_error:
+            st.warning(ppvr_evaluation_error)
+        else:
+            st.info(
+                "PPVR impact could not be evaluated because Description, QA conclusion, "
+                "Conclusion, and Justification of Impact columns were not found."
+            )
+
+    if root_cause_values:
+        st.markdown("#### Selected Root Cause Results")
+        if root_cause_summary and root_cause_col:
+            st.table(root_cause_summary)
+            st.caption(f"Counts are based on the '{root_cause_col}' column.")
+        else:
+            st.info("A root cause column was not found in the filtered records.")
 
     if dv_col:
         # Show only DV identifiers as a compact quick-check list.

@@ -11,12 +11,14 @@ This module contains:
 from __future__ import annotations
 
 import io
+import json
 import re
 from collections import Counter
 from typing import Any
 
 import pandas as pd
 from docx import Document
+from openai import OpenAI
 from pypdf import PdfReader
 from streamlit.runtime.uploaded_file_manager import UploadedFile
 
@@ -147,6 +149,17 @@ def find_column(dataframe: pd.DataFrame, candidates: list[str]) -> str | None:
 		if match is not None:
 			return match
 	return None
+
+
+def find_columns(dataframe: pd.DataFrame, candidates: list[str]) -> list[str]:
+	"""Find all matching column names from a list of candidates (case-insensitive)."""
+	lower_map = {col.lower().strip(): col for col in dataframe.columns}
+	matched_columns: list[str] = []
+	for candidate in candidates:
+		match = lower_map.get(candidate.lower().strip())
+		if match is not None and match not in matched_columns:
+			matched_columns.append(match)
+	return matched_columns
 
 
 def filter_by_timeline(
@@ -314,6 +327,131 @@ def filter_by_deviation_progress(
 	removed = int((~mask).sum())
 	
 	return dataframe[mask].reset_index(drop=True), removed, lifecycle_col, progress_counts
+
+
+def evaluate_ppvr_impact_with_llm(
+	dataframe: pd.DataFrame,
+	api_key: str,
+	model: str,
+	base_url: str | None = None,
+) -> tuple[dict[str, int], list[str]]:
+	"""Evaluate potential PPVR impact with an LLM across the filtered records."""
+	text_columns = find_columns(
+		dataframe,
+		[
+			"description",
+			"desc",
+			"details",
+			"detail",
+			"qa conclusion",
+			"qa_conclusion",
+			"qaconclusion",
+			"conclusion",
+			"justification of impact",
+			"justification_of_impact",
+			"impact justification",
+		],
+	)
+	if not text_columns:
+		return {}, []
+
+	client = OpenAI(api_key=api_key, base_url=base_url)
+	batch_size = 10
+	classifications: list[dict[str, Any]] = []
+
+	for start_index in range(0, len(dataframe), batch_size):
+		batch_df = dataframe.iloc[start_index : start_index + batch_size]
+		records_payload: list[dict[str, str | int]] = []
+		for row_index, (_, row) in enumerate(batch_df.iterrows(), start=start_index + 1):
+			record_text_parts = []
+			for column_name in text_columns:
+				cell_value = str(row.get(column_name, "") or "").strip()
+				if cell_value:
+					record_text_parts.append(f"{column_name}: {cell_value}")
+			records_payload.append(
+				{
+					"record_id": row_index,
+					"text": "\n".join(record_text_parts) if record_text_parts else "No relevant text provided.",
+				}
+			)
+
+		prompt = (
+			"You are reviewing deviation records for potential PPVR impact. "
+			"PPVR categories are patient safety, product quality, validation, and regulatory documentation. "
+			"Interpret the record text and decide whether there is potential impact. "
+			"Return strict JSON only with the schema: "
+			"{\"records\":[{\"record_id\":1,\"potential_ppvr_impact\":true,\"no_identified_impact\":false,\"unclear\":false,\"patient_safety\":false,\"product_quality\":true,\"validation\":false,\"regulatory_documentation\":false,\"rationale\":\"short rationale\"}]}. "
+			"Mark no_identified_impact true only when the text clearly supports no impact. "
+			"Mark unclear true when the text is insufficient or ambiguous. "
+			"A record may affect more than one category."
+		)
+
+		response = client.chat.completions.create(
+			model=model,
+			messages=[
+				{"role": "system", "content": prompt},
+				{"role": "user", "content": json.dumps(records_payload, ensure_ascii=True)},
+			],
+			response_format={"type": "json_object"},
+			temperature=0,
+		)
+
+		content = response.choices[0].message.content or "{\"records\": []}"
+		parsed = json.loads(content)
+		classifications.extend(parsed.get("records", []))
+
+	impact_summary = {
+		"Records reviewed": int(len(dataframe)),
+		"Potential PPVR impact": 0,
+		"No identified impact": 0,
+		"Unclear / manual review": 0,
+		"Patient safety": 0,
+		"Product quality": 0,
+		"Validation": 0,
+		"Regulatory documentation": 0,
+	}
+
+	for classification in classifications:
+		if classification.get("potential_ppvr_impact"):
+			impact_summary["Potential PPVR impact"] += 1
+		if classification.get("no_identified_impact"):
+			impact_summary["No identified impact"] += 1
+		if classification.get("unclear"):
+			impact_summary["Unclear / manual review"] += 1
+		if classification.get("patient_safety"):
+			impact_summary["Patient safety"] += 1
+		if classification.get("product_quality"):
+			impact_summary["Product quality"] += 1
+		if classification.get("validation"):
+			impact_summary["Validation"] += 1
+		if classification.get("regulatory_documentation"):
+			impact_summary["Regulatory documentation"] += 1
+
+	return impact_summary, text_columns
+
+
+def summarize_selected_root_causes(
+	dataframe: pd.DataFrame,
+	selected_values: list[str],
+) -> tuple[list[dict[str, int | str]], str | None]:
+	"""Count filtered records by the selected root cause values."""
+	if not selected_values:
+		return [], None
+
+	root_cause_col = find_column(
+		dataframe,
+		["root cause", "root_cause", "rootcause", "cause", "cause category", "cause_category"],
+	)
+	if root_cause_col is None:
+		return [], None
+
+	root_cause_lower = dataframe[root_cause_col].astype(str).str.lower()
+	root_cause_summary: list[dict[str, int | str]] = []
+	for selected_value in selected_values:
+		count = root_cause_lower.str.contains(selected_value.lower(), na=False, regex=False).sum()
+		root_cause_summary.append({"Root Cause": selected_value, "Fields": int(count)})
+
+	return root_cause_summary, root_cause_col
 
 
 def build_text_analysis(text: str) -> dict[str, Any]:

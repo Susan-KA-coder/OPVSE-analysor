@@ -5,15 +5,24 @@ This app provides two business tabs:
 2. Change request
 
 Each tab allows users to upload a supported file and enter timeline/target data.
+
+Code map:
+1) Import and setup section
+2) UI helper section
+3) Tab workflow section (input -> parse -> filter -> result)
+4) App entrypoint section
 """
 
 from __future__ import annotations
 
+# Standard library imports used for input validation and default dates.
 import re
 from datetime import date, timedelta
 
+# Third-party UI framework.
 import streamlit as st
 
+# Project-local analysis functions shared between tabs.
 from analysis_functions import (
     SUPPORTED_FILE_TYPES,
     build_analysis_summary,
@@ -22,6 +31,8 @@ from analysis_functions import (
     get_column_statistics,
     parse_uploaded_file,
 )
+
+# Project-local data dictionary used in the field guidance expander.
 from data_dictionary import DATA_DICTIONARY
 
 

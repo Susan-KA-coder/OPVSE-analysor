@@ -121,6 +121,89 @@ def get_column_statistics(dataframe: pd.DataFrame, column_name: str) -> dict[str
 	}
 
 
+def find_column(dataframe: pd.DataFrame, candidates: list[str]) -> str | None:
+	"""Find the first matching column name from a list of candidates (case-insensitive).
+
+	Args:
+		dataframe: Source dataframe.
+		candidates: List of possible column name variants to search for.
+
+	Returns:
+		Matched column name as it appears in the dataframe, or None.
+	"""
+	lower_map = {col.lower().strip(): col for col in dataframe.columns}
+	for candidate in candidates:
+		match = lower_map.get(candidate.lower().strip())
+		if match is not None:
+			return match
+	return None
+
+
+def filter_by_timeline(
+	dataframe: pd.DataFrame,
+	start_date,
+	end_date,
+) -> tuple[pd.DataFrame, int, str | None]:
+	"""Filter rows by the 'Date occurred' column within the given date range.
+
+	Args:
+		dataframe: Source dataset.
+		start_date: Inclusive start date.
+		end_date: Inclusive end date.
+
+	Returns:
+		Tuple of (filtered_dataframe, removed_row_count, matched_column_name_or_None).
+	"""
+	date_col = find_column(
+		dataframe,
+		["date occurred", "date_occurred", "dateoccurred", "date", "occurred date"],
+	)
+	if date_col is None:
+		return dataframe, 0, None
+
+	parsed_dates = pd.to_datetime(dataframe[date_col], errors="coerce")
+	start = pd.Timestamp(start_date)
+	end = pd.Timestamp(end_date)
+
+	mask = (parsed_dates >= start) & (parsed_dates <= end)
+	removed = int((~mask).sum())
+	return dataframe[mask].reset_index(drop=True), removed, date_col
+
+
+def filter_by_target_line(
+	dataframe: pd.DataFrame,
+	target_line: str,
+) -> tuple[pd.DataFrame, int]:
+	"""Filter rows by checking if Title or Description contains the target line string.
+
+	Args:
+		dataframe: Source dataset (already timeline-filtered).
+		target_line: Target line code to search for (e.g. DF50.01).
+
+	Returns:
+		Tuple of (filtered_dataframe, removed_row_count).
+	"""
+	if not target_line:
+		return dataframe, 0
+
+	title_col = find_column(dataframe, ["title", "name", "subject"])
+	desc_col = find_column(dataframe, ["description", "desc", "details", "detail"])
+
+	term = target_line.lower()
+
+	mask = pd.Series([False] * len(dataframe), index=dataframe.index)
+	if title_col:
+		mask |= dataframe[title_col].astype(str).str.lower().str.contains(term, na=False)
+	if desc_col:
+		mask |= dataframe[desc_col].astype(str).str.lower().str.contains(term, na=False)
+
+	if title_col is None and desc_col is None:
+		return dataframe, 0
+
+	removed = int((~mask).sum())
+	return dataframe[mask].reset_index(drop=True), removed
+
+
 def build_text_analysis(text: str) -> dict[str, Any]:
 	"""Generate simple text analysis for PDF and Word uploads.
 

@@ -3,14 +3,13 @@
 from __future__ import annotations
 
 DATA_DICTIONARY = {
-    "record_id": "Unique identifier of each record.",
-    "date": "Event date or record creation date.",
+    "DV number": "Unique deviation identifier (e.g. DV-2025-001).",
+    "Date occurred": "Date the deviation or change request occurred. Used for timeline filtering.",
+    "Title": "Short title of the record. Used for target line filtering.",
+    "Description": "Detailed description of the record. Used for target line filtering.",
     "owner": "Responsible person or team.",
     "department": "Business unit or functional group.",
-    "description": "Short statement describing the issue/request.",
     "status": "Current state such as open, in progress, or closed.",
-    "impact": "Business or operational impact description.",
     "priority": "Urgency level for processing the record.",
-    "timeline": "User-provided expected timeline.",
-    "target_line": "User-provided target line.",
+    "target_line": "User-provided target line code (format: DF07.01).",
 }

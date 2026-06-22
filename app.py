@@ -17,6 +17,8 @@ import streamlit as st
 from analysis_functions import (
     SUPPORTED_FILE_TYPES,
     build_analysis_summary,
+    filter_by_target_line,
+    filter_by_timeline,
     get_column_statistics,
     parse_uploaded_file,
 )
@@ -156,17 +158,71 @@ def render_tab(tab_name: str) -> None:
         return
 
     try:
-        parse_uploaded_file(uploaded_file)
+        parsed = parse_uploaded_file(uploaded_file)
     except Exception:
         st.error("The uploaded file could not be processed. Please check the file format and try again.")
         return
 
-    st.success(
-        f"**{uploaded_file.name}** uploaded successfully. "
-        f"Timeline: **{timeline}**. "
-        f"Target line: **{target_line or 'Not provided yet.'}**"
+    if parsed["kind"] != "table":
+        st.warning("Only CSV and Excel files support the filtering analysis. Please upload a spreadsheet file.")
+        return
+
+    raw_df = parsed["data"]
+    total_rows = len(raw_df)
+
+    # --- Step 1: Timeline filter ---
+    df_after_timeline, removed_timeline, date_col = filter_by_timeline(
+        raw_df, timeline_start, timeline_end
     )
-    st.info("Analysis will appear here once configured.")
+
+    # --- Step 2: Target line filter ---
+    df_final, removed_target = filter_by_target_line(df_after_timeline, target_line)
+
+    # --- Result of Input Evaluation ---
+    st.markdown("---")
+    st.markdown("### Result of Input Evaluation")
+
+    if date_col is None:
+        st.warning(
+            "A 'Date occurred' column was not found in the file. "
+            "Timeline filtering was skipped. "
+            "Expected column name: 'Date occurred'."
+        )
+    if not target_line:
+        st.warning("No target line was entered. Target line filtering was skipped.")
+
+    # DV number list
+    dv_col_candidates = ["dv number", "dv_number", "dvnumber", "dv no", "dv"]
+    dv_col = next(
+        (col for col in df_final.columns if col.lower().strip() in dv_col_candidates),
+        None,
+    )
+
+    summary_col1, summary_col2, summary_col3, summary_col4 = st.columns(4)
+    summary_col1.metric("Total records in file", total_rows)
+    summary_col2.metric("Removed — outside timeline", removed_timeline)
+    summary_col3.metric("Removed — no target line match", removed_target)
+    summary_col4.metric("Records kept for analysis", len(df_final))
+
+    if len(df_final) == 0:
+        st.error("No records remain after filtering. Check your timeline and target line settings.")
+        return
+
+    if dv_col:
+        st.markdown("#### DV Numbers in Scope")
+        st.dataframe(
+            df_final[[dv_col]].rename(columns={dv_col: "DV Number"}),
+            use_container_width=True,
+            hide_index=True,
+        )
+    else:
+        st.info(
+            "A 'DV number' column was not found in the file. "
+            f"{len(df_final)} records passed all filters."
+        )
+
+    st.markdown("#### Filtered Records")
+    st.dataframe(df_final, use_container_width=True, hide_index=True)
 
 
 def main() -> None:

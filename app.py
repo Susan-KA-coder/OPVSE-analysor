@@ -228,13 +228,12 @@ def render_tab(tab_name: str) -> None:
         selected_values: list[str] = []
         if is_selected:
             if option_name == "Type of classification":
-                selected_value = st.radio(
-                    f"{option_name} value",
+                selected_values = st.multiselect(
+                    f"{option_name} values",
                     options=values_for_option,
-                    horizontal=True,
-                    key=f"{option_token}_value_{tab_name}",
+                    default=values_for_option,
+                    key=f"{option_token}_values_{tab_name}",
                 )
-                selected_values = [selected_value]
             else:
                 selected_values = st.multiselect(
                     f"{option_name} values",

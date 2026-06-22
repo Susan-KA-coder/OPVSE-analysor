@@ -25,6 +25,12 @@ from analysis_functions import (
 from data_dictionary import DATA_DICTIONARY
 
 
+# ============================================================================
+# UI HELPERS
+# These helpers only render UI components and do not change filter logic.
+# ============================================================================
+
+
 def render_data_dictionary() -> None:
     """Render business field guidance used by this app.
 
@@ -126,6 +132,9 @@ def render_tab(tab_name: str) -> None:
         1) Keep records within selected timeline based on Date occurred.
         2) Keep records whose Title/Description contains target-line number.
     """
+    # -------------------------------
+    # SECTION A: INPUT COLLECTION
+    # -------------------------------
     st.subheader(f"{tab_name} Input")
 
     # 1) Timeline input (date range)
@@ -178,6 +187,9 @@ def render_tab(tab_name: str) -> None:
         st.info("Upload a file to begin analysis.")
         return
 
+    # -------------------------------
+    # SECTION B: FILE PARSING
+    # -------------------------------
     try:
         parsed = parse_uploaded_file(uploaded_file)
     except Exception:
@@ -189,6 +201,9 @@ def render_tab(tab_name: str) -> None:
         st.warning("Only CSV and Excel files support the filtering analysis. Please upload a spreadsheet file.")
         return
 
+    # -------------------------------
+    # SECTION C: FILTER EXECUTION
+    # -------------------------------
     raw_df = parsed["data"]
     total_rows = len(raw_df)
 
@@ -200,6 +215,9 @@ def render_tab(tab_name: str) -> None:
     # 5) Apply target-line filter on the already timeline-filtered data.
     df_final, removed_target = filter_by_target_line(df_after_timeline, target_line)
 
+    # -------------------------------
+    # SECTION D: RESULTS TO USER
+    # -------------------------------
     # 6) Show evaluation results and filtered output.
     st.markdown("---")
     st.markdown("### Result of Input Evaluation")
@@ -221,6 +239,7 @@ def render_tab(tab_name: str) -> None:
     )
 
     summary_col1, summary_col2, summary_col3, summary_col4 = st.columns(4)
+    # Four KPI cards summarize the filtering outcome.
     summary_col1.metric("Total records in file", total_rows)
     summary_col2.metric("Removed — outside timeline", removed_timeline)
     summary_col3.metric("Removed — no target line match", removed_target)
@@ -231,6 +250,7 @@ def render_tab(tab_name: str) -> None:
         return
 
     if dv_col:
+        # Show only DV identifiers as a compact quick-check list.
         st.markdown("#### DV Numbers in Scope")
         st.dataframe(
             df_final[[dv_col]].rename(columns={dv_col: "DV Number"}),
@@ -244,9 +264,14 @@ def render_tab(tab_name: str) -> None:
         )
 
     st.markdown("#### Filtered Records")
+    # Full records are still shown for traceability.
     st.dataframe(df_final, use_container_width=True, hide_index=True)
 
 
+# ============================================================================
+# APP ENTRYPOINT
+# Builds page shell and mounts both business tabs.
+# ============================================================================
 def main() -> None:
     """Run the Streamlit application."""
     st.set_page_config(page_title="OPV/SE Analyzor", layout="wide")

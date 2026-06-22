@@ -1,7 +1,11 @@
-"""Helper functions for file parsing and baseline analysis.
+"""Helper functions for file parsing and input-evaluation analysis.
 
-The module is intentionally generic so it can support multiple use-cases
-for Deviation and Change request workflows.
+This module contains:
+1) File parsing helpers for CSV/Excel/PDF/Word.
+2) Generic summary/statistics utilities.
+3) Business filters used by the app:
+	- timeline filter via Date occurred
+	- target line filter via Title/Description
 """
 
 from __future__ import annotations
@@ -20,13 +24,17 @@ SUPPORTED_FILE_TYPES = ["csv", "xlsx", "xls", "pdf", "docx"]
 
 
 def parse_uploaded_file(uploaded_file: UploadedFile) -> dict[str, Any]:
-	"""Parse uploaded file by extension and return standardized payload.
+	"""Parse uploaded file by extension and return a normalized payload.
 
 	Args:
 		uploaded_file: Uploaded file object provided by Streamlit.
 
 	Returns:
-		A dictionary with normalized keys for table or text analysis.
+		A dictionary with the following keys:
+			kind: "table" or "text"
+			file_type: csv/excel/pdf/word
+			data: pandas DataFrame (for tables)
+			preview/analysis: text preview + metrics (for documents)
 	"""
 	file_name = uploaded_file.name.lower()
 
@@ -132,6 +140,7 @@ def find_column(dataframe: pd.DataFrame, candidates: list[str]) -> str | None:
 	Returns:
 		Matched column name as it appears in the dataframe, or None.
 	"""
+	# Build a case-insensitive lookup but preserve original column names.
 	lower_map = {col.lower().strip(): col for col in dataframe.columns}
 	for candidate in candidates:
 		match = lower_map.get(candidate.lower().strip())
@@ -162,6 +171,7 @@ def filter_by_timeline(
 	if date_col is None:
 		return dataframe, 0, None
 
+	# Non-parseable dates become NaT and are excluded from the kept range.
 	parsed_dates = pd.to_datetime(dataframe[date_col], errors="coerce")
 	start = pd.Timestamp(start_date)
 	end = pd.Timestamp(end_date)
@@ -175,11 +185,11 @@ def filter_by_target_line(
 	dataframe: pd.DataFrame,
 	target_line: str,
 ) -> tuple[pd.DataFrame, int]:
-	"""Filter rows by checking Title/Description for the numeric target-line part.
+	"""Filter rows by checking Title/Description for numeric target-line content.
 
 	Args:
 		dataframe: Source dataset (already timeline-filtered).
-		target_line: Target line code to search for (e.g. DF50.1).
+			target_line: Target line code to search for (e.g. DF50.1).
 
 	Returns:
 		Tuple of (filtered_dataframe, removed_row_count).
@@ -194,10 +204,11 @@ def filter_by_target_line(
 	if match is None:
 		return dataframe, 0
 
+	# Use only the numeric portion, for example DF50.1 -> 50.1
 	numeric_part = match.group(1).lower()
 	search_terms = {numeric_part}
 
-	# Exception: also match compact 3-digit representation for codes like 50.1 -> 501.
+	# Exception: also match compact 3-digit representation such as 50.1 -> 501.
 	compact_numeric = re.sub(r"\D", "", numeric_part)
 	if len(compact_numeric) == 3:
 		search_terms.add(compact_numeric)
@@ -212,6 +223,7 @@ def filter_by_target_line(
 		for term in search_terms:
 			mask |= desc_series.str.contains(term, na=False, regex=False)
 
+	# If neither text column exists, do not remove anything in this step.
 	if title_col is None and desc_col is None:
 		return dataframe, 0
 

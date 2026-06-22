@@ -1,4 +1,4 @@
-# Deviation and Change Request Dashboard
+# OPV/SE Analyzor
 
 This project is a Streamlit application with two main tabs:
 
@@ -32,6 +32,39 @@ In each tab, users can:
 	- Timeline
 	- Target line
 - Data dictionary panel for consistent field naming
+
+## Input Evaluation Flow
+
+After uploading a CSV/Excel file, the app evaluates records in two steps:
+
+1. Timeline filter
+- Looks for `Date occurred` (case-insensitive variants are supported)
+- Keeps only rows inside selected start/end dates
+- Counts rows removed outside timeline
+
+2. Target line filter
+- Uses the numeric part of input (for example `DF50.1` -> `50.1`)
+- Searches `Title` and `Description` columns for that numeric part
+- 3-digit exception is supported (for example also matches `501`)
+- Counts rows removed due to no target-line match
+
+Then the app shows a `Result of Input Evaluation` section with:
+- Total records in file
+- Removed outside timeline
+- Removed due to target-line mismatch
+- Records kept for analysis
+- DV numbers in scope (if `DV number` column exists)
+
+## Expected Columns
+
+For best results, include these columns in uploaded files:
+
+- `Date occurred`
+- `Title`
+- `Description`
+- `DV number`
+
+The app also supports common naming variants, but the names above are recommended.
 
 ## Run Locally
 

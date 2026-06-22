@@ -26,7 +26,11 @@ from data_dictionary import DATA_DICTIONARY
 
 
 def render_data_dictionary() -> None:
-    """Render data dictionary in a user-friendly table."""
+    """Render business field guidance used by this app.
+
+    The expander keeps the main screen clean while still giving users
+    a quick reference for expected column meanings.
+    """
     with st.expander("Field reference", expanded=False):
         st.table(
             [
@@ -37,7 +41,12 @@ def render_data_dictionary() -> None:
 
 
 def render_table_analysis(dataframe) -> None:
-    """Render tabular analysis without showing raw program structures."""
+    """Render optional table analytics with user-friendly widgets.
+
+    Note:
+        This helper is kept for the next analysis phase. The current workflow
+        shows input-evaluation results after filtering.
+    """
     summary = build_analysis_summary(dataframe)
 
     metric_col1, metric_col2, metric_col3 = st.columns(3)
@@ -78,7 +87,11 @@ def render_table_analysis(dataframe) -> None:
 
 
 def render_text_analysis(parsed: dict) -> None:
-    """Render text file analysis in readable layout."""
+    """Render optional text analytics for PDF/Word uploads.
+
+    Note:
+        This helper is kept for the next analysis phase.
+    """
     text_analysis = parsed["analysis"]
 
     metric_col1, metric_col2 = st.columns(2)
@@ -104,13 +117,18 @@ def render_text_analysis(parsed: dict) -> None:
 
 
 def render_tab(tab_name: str) -> None:
-    """Render one business tab with upload and analysis controls.
+    """Render one business tab and run the two-stage input evaluation.
 
     Args:
         tab_name: Display name of the current tab.
+
+    Evaluation steps:
+        1) Keep records within selected timeline based on Date occurred.
+        2) Keep records whose Title/Description contains target-line number.
     """
     st.subheader(f"{tab_name} Input")
 
+    # 1) Timeline input (date range)
     col1, col2 = st.columns(2)
     with col1:
         timeline_start = st.date_input(
@@ -133,6 +151,7 @@ def render_tab(tab_name: str) -> None:
 
     timeline = f"{timeline_start.strftime('%d %b %Y')} to {timeline_end.strftime('%d %b %Y')}"
 
+    # 2) Target line input and format validation
     target_line_raw = st.text_input(
         label="Target line (format: DF50.1)",
         key=f"target_{tab_name}",
@@ -148,6 +167,7 @@ def render_tab(tab_name: str) -> None:
     else:
         target_line = target_line_raw
 
+    # 3) File upload
     uploaded_file = st.file_uploader(
         "Upload file (CSV, Excel, PDF, Word)",
         type=SUPPORTED_FILE_TYPES,
@@ -164,6 +184,7 @@ def render_tab(tab_name: str) -> None:
         st.error("The uploaded file could not be processed. Please check the file format and try again.")
         return
 
+    # Current input-evaluation logic works with tabular files.
     if parsed["kind"] != "table":
         st.warning("Only CSV and Excel files support the filtering analysis. Please upload a spreadsheet file.")
         return
@@ -171,15 +192,15 @@ def render_tab(tab_name: str) -> None:
     raw_df = parsed["data"]
     total_rows = len(raw_df)
 
-    # --- Step 1: Timeline filter ---
+    # 4) Apply timeline filter first.
     df_after_timeline, removed_timeline, date_col = filter_by_timeline(
         raw_df, timeline_start, timeline_end
     )
 
-    # --- Step 2: Target line filter ---
+    # 5) Apply target-line filter on the already timeline-filtered data.
     df_final, removed_target = filter_by_target_line(df_after_timeline, target_line)
 
-    # --- Result of Input Evaluation ---
+    # 6) Show evaluation results and filtered output.
     st.markdown("---")
     st.markdown("### Result of Input Evaluation")
 
@@ -192,7 +213,7 @@ def render_tab(tab_name: str) -> None:
     if not target_line:
         st.warning("No target line was entered. Target line filtering was skipped.")
 
-    # DV number list
+    # Try common DV column name variants for display.
     dv_col_candidates = ["dv number", "dv_number", "dvnumber", "dv no", "dv"]
     dv_col = next(
         (col for col in df_final.columns if col.lower().strip() in dv_col_candidates),

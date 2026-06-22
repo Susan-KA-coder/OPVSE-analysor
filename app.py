@@ -134,15 +134,16 @@ def render_tab(tab_name: str) -> None:
     timeline = f"{timeline_start.strftime('%d %b %Y')} to {timeline_end.strftime('%d %b %Y')}"
 
     target_line_raw = st.text_input(
-        label="Target line (format: DF07.01)",
+        label="Target line (format: DF50.1)",
         key=f"target_{tab_name}",
-        placeholder="Example: DF07.01",
-        help="Enter target line in format DF followed by two digits, a dot, and two digits. Example: DF07.01",
+        placeholder="Example: DF50.1",
+        help="Enter target line in format DF followed by 2-3 digits, a dot, and 1-2 digits. Example: DF50.1",
     )
 
-    TARGET_PATTERN = re.compile(r"^DF\d{2}\.\d{2}$")
+    target_line_raw = target_line_raw.strip().upper()
+    TARGET_PATTERN = re.compile(r"^DF\d{2,3}\.\d{1,2}$")
     if target_line_raw and not TARGET_PATTERN.match(target_line_raw):
-        st.warning("Target line must follow the format DF07.01 (e.g. DF12.03).")
+        st.warning("Target line must follow the format DF50.1 (for example DF50.1 or DF500.1).")
         target_line = ""
     else:
         target_line = target_line_raw

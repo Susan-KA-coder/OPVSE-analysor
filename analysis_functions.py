@@ -7,6 +7,7 @@ for Deviation and Change request workflows.
 from __future__ import annotations
 
 import io
+import re
 from collections import Counter
 from typing import Any
 
@@ -174,11 +175,11 @@ def filter_by_target_line(
 	dataframe: pd.DataFrame,
 	target_line: str,
 ) -> tuple[pd.DataFrame, int]:
-	"""Filter rows by checking if Title or Description contains the target line string.
+	"""Filter rows by checking Title/Description for the numeric target-line part.
 
 	Args:
 		dataframe: Source dataset (already timeline-filtered).
-		target_line: Target line code to search for (e.g. DF50.01).
+		target_line: Target line code to search for (e.g. DF50.1).
 
 	Returns:
 		Tuple of (filtered_dataframe, removed_row_count).
@@ -189,13 +190,27 @@ def filter_by_target_line(
 	title_col = find_column(dataframe, ["title", "name", "subject"])
 	desc_col = find_column(dataframe, ["description", "desc", "details", "detail"])
 
-	term = target_line.lower()
+	match = re.search(r"(\d{2,3}\.\d{1,2})", target_line)
+	if match is None:
+		return dataframe, 0
+
+	numeric_part = match.group(1).lower()
+	search_terms = {numeric_part}
+
+	# Exception: also match compact 3-digit representation for codes like 50.1 -> 501.
+	compact_numeric = re.sub(r"\D", "", numeric_part)
+	if len(compact_numeric) == 3:
+		search_terms.add(compact_numeric)
 
 	mask = pd.Series([False] * len(dataframe), index=dataframe.index)
 	if title_col:
-		mask |= dataframe[title_col].astype(str).str.lower().str.contains(term, na=False)
+		title_series = dataframe[title_col].astype(str).str.lower()
+		for term in search_terms:
+			mask |= title_series.str.contains(term, na=False, regex=False)
 	if desc_col:
-		mask |= dataframe[desc_col].astype(str).str.lower().str.contains(term, na=False)
+		desc_series = dataframe[desc_col].astype(str).str.lower()
+		for term in search_terms:
+			mask |= desc_series.str.contains(term, na=False, regex=False)
 
 	if title_col is None and desc_col is None:
 		return dataframe, 0

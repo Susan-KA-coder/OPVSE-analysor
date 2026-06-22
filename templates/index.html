@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Performance Board</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}" />
+</head>
+<body>
+  <div class="app">
+    <header class="header">
+      <div class="header-inner">
+        <div class="header-brand">
+          <span class="header-icon">📊</span>
+          <div>
+            <h1 class="header-title">Performance Board</h1>
+            <p class="header-copy">Python-powered shared board for live team updates.</p>
+          </div>
+        </div>
+        <div class="header-meta">
+          <span id="current-date" class="header-date"></span>
+          <span id="sync-status" class="sync-status">Connecting...</span>
+        </div>
+      </div>
+    </header>
+
+    <nav class="tab-nav">
+      <button class="tab-btn active" data-tab="action"><span class="tab-icon">⚡</span><span>Action</span></button>
+      <button class="tab-btn" data-tab="safety"><span class="tab-icon">🛡️</span><span>Safety</span></button>
+      <button class="tab-btn" data-tab="whereabout"><span class="tab-icon">📍</span><span>Whereabout</span></button>
+      <button class="tab-btn" data-tab="good-stories"><span class="tab-icon">⭐</span><span>Good Stories</span></button>
+    </nav>
+
+    <main class="tab-content-wrapper">
+      <section class="tab-panel active" id="tab-action">
+        <div class="panel-header">
+          <h2 class="panel-title">⚡ Action</h2>
+          <p class="panel-subtitle">Track ongoing actions and follow-ups in one shared space.</p>
+        </div>
+        <div class="panel-grid">
+          <section class="editor-card accent-action">
+            <div class="card-heading"><h3>Write an update</h3><p>Colleagues can add or edit action updates here.</p></div>
+            <form class="entry-form" data-tab-form="action">
+              <label class="field"><span>Your name</span><input type="text" name="author" maxlength="50" placeholder="Enter your name" required /></label>
+              <label class="field"><span>Update</span><textarea name="text" rows="6" maxlength="2000" placeholder="Write the latest action item, owner, or follow-up." required></textarea></label>
+              <div class="form-actions"><button type="submit" class="primary-btn">Save update</button><button type="button" class="secondary-btn form-cancel" hidden>Cancel edit</button><span class="form-status" aria-live="polite"></span></div>
+            </form>
+          </section>
+          <section class="entries-card">
+            <div class="card-heading"><h3>Shared entries</h3><p>Your manager can open this board and see all saved action updates.</p></div>
+            <div class="entry-list" data-entry-list="action"></div>
+          </section>
+        </div>
+      </section>
+
+      <section class="tab-panel" id="tab-safety">
+        <div class="panel-header">
+          <h2 class="panel-title">🛡️ Safety</h2>
+          <p class="panel-subtitle">Capture safety observations, incidents, and required actions.</p>
+        </div>
+        <div class="panel-grid">
+          <section class="editor-card accent-safety">
+            <div class="card-heading"><h3>Write an update</h3><p>Use this space for safety issues, observations, or mitigations.</p></div>
+            <form class="entry-form" data-tab-form="safety">
+              <label class="field"><span>Your name</span><input type="text" name="author" maxlength="50" placeholder="Enter your name" required /></label>
+              <label class="field"><span>Update</span><textarea name="text" rows="6" maxlength="2000" placeholder="Write the latest safety update." required></textarea></label>
+              <div class="form-actions"><button type="submit" class="primary-btn">Save update</button><button type="button" class="secondary-btn form-cancel" hidden>Cancel edit</button><span class="form-status" aria-live="polite"></span></div>
+            </form>
+          </section>
+          <section class="entries-card">
+            <div class="card-heading"><h3>Shared entries</h3><p>Everyone on the team sees the same saved safety notes.</p></div>
+            <div class="entry-list" data-entry-list="safety"></div>
+          </section>
+        </div>
+      </section>
+
+      <section class="tab-panel" id="tab-whereabout">
+        <div class="panel-header">
+          <h2 class="panel-title">📍 Whereabout</h2>
+          <p class="panel-subtitle">Share location, attendance, and schedule changes.</p>
+        </div>
+        <div class="panel-grid">
+          <section class="editor-card accent-whereabout">
+            <div class="card-heading"><h3>Write an update</h3><p>Keep the team aligned on where people are and any changes.</p></div>
+            <form class="entry-form" data-tab-form="whereabout">
+              <label class="field"><span>Your name</span><input type="text" name="author" maxlength="50" placeholder="Enter your name" required /></label>
+              <label class="field"><span>Update</span><textarea name="text" rows="6" maxlength="2000" placeholder="Write the latest location or attendance update." required></textarea></label>
+              <div class="form-actions"><button type="submit" class="primary-btn">Save update</button><button type="button" class="secondary-btn form-cancel" hidden>Cancel edit</button><span class="form-status" aria-live="polite"></span></div>
+            </form>
+          </section>
+          <section class="entries-card">
+            <div class="card-heading"><h3>Shared entries</h3><p>Managers and colleagues see the same location and attendance updates.</p></div>
+            <div class="entry-list" data-entry-list="whereabout"></div>
+          </section>
+        </div>
+      </section>
+
+      <section class="tab-panel" id="tab-good-stories">
+        <div class="panel-header">
+          <h2 class="panel-title">⭐ Good Stories</h2>
+          <p class="panel-subtitle">Celebrate wins and publish positive highlights for the team.</p>
+        </div>
+        <div class="panel-grid">
+          <section class="editor-card accent-stories">
+            <div class="card-heading"><h3>Write an update</h3><p>Capture achievements, recognition, and success stories here.</p></div>
+            <form class="entry-form" data-tab-form="good-stories">
+              <label class="field"><span>Your name</span><input type="text" name="author" maxlength="50" placeholder="Enter your name" required /></label>
+              <label class="field"><span>Update</span><textarea name="text" rows="6" maxlength="2000" placeholder="Write the latest success story or win." required></textarea></label>
+              <div class="form-actions"><button type="submit" class="primary-btn">Save update</button><button type="button" class="secondary-btn form-cancel" hidden>Cancel edit</button><span class="form-status" aria-live="polite"></span></div>
+            </form>
+          </section>
+          <section class="entries-card">
+            <div class="card-heading"><h3>Shared entries</h3><p>The full team can see and update good news in one place.</p></div>
+            <div class="entry-list" data-entry-list="good-stories"></div>
+          </section>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>

@@ -23,6 +23,84 @@ from analysis_functions import (
 from data_dictionary import DATA_DICTIONARY
 
 
+def render_data_dictionary() -> None:
+    """Render data dictionary in a user-friendly table."""
+    with st.expander("Field reference", expanded=False):
+        st.table(
+            [
+                {"Field": field, "Description": description}
+                for field, description in DATA_DICTIONARY.items()
+            ]
+        )
+
+
+def render_table_analysis(dataframe) -> None:
+    """Render tabular analysis without showing raw program structures."""
+    summary = build_analysis_summary(dataframe)
+
+    metric_col1, metric_col2, metric_col3 = st.columns(3)
+    metric_col1.metric("Rows", summary["rows"])
+    metric_col2.metric("Columns", summary["columns"])
+    metric_col3.metric("Numeric columns", len(dataframe.select_dtypes(include="number").columns.tolist()))
+
+    st.markdown("#### Data Preview")
+    st.dataframe(dataframe.head(20), width="stretch")
+
+    missing_table = [
+        {"Column": column_name, "Missing values": missing_count}
+        for column_name, missing_count in summary["missing_values_by_column"].items()
+    ]
+    st.markdown("#### Missing Values")
+    st.table(missing_table)
+
+    numeric_columns = dataframe.select_dtypes(include="number").columns.tolist()
+    if numeric_columns:
+        selected_column = st.selectbox(
+            "Choose numeric column for detailed statistics",
+            numeric_columns,
+            key="stats_col_table",
+        )
+        stats = get_column_statistics(dataframe, selected_column)
+
+        stat_col1, stat_col2, stat_col3 = st.columns(3)
+        stat_col1.metric("Min", f"{stats['min']:.2f}")
+        stat_col2.metric("Mean", f"{stats['mean']:.2f}")
+        stat_col3.metric("Max", f"{stats['max']:.2f}")
+
+        stat_col4, stat_col5, stat_col6 = st.columns(3)
+        stat_col4.metric("Count", f"{stats['count']:.0f}")
+        stat_col5.metric("Median", f"{stats['median']:.2f}")
+        stat_col6.metric("Std Dev", f"{stats['std_dev']:.2f}")
+    else:
+        st.info("No numeric columns were detected for detailed statistics.")
+
+
+def render_text_analysis(parsed: dict) -> None:
+    """Render text file analysis in readable layout."""
+    text_analysis = parsed["analysis"]
+
+    metric_col1, metric_col2 = st.columns(2)
+    metric_col1.metric("Characters", text_analysis["characters"])
+    metric_col2.metric("Words", text_analysis["words"])
+
+    st.markdown("#### Most Frequent Words")
+    st.table(
+        [
+            {"Word": word, "Count": count}
+            for word, count in text_analysis["top_10_words"]
+        ]
+    )
+
+    st.markdown("#### Extracted Text Preview")
+    st.text_area(
+        label="Preview",
+        value=parsed["preview"],
+        height=220,
+        key="preview_text",
+        label_visibility="collapsed",
+    )
+
+
 def render_tab(tab_name: str) -> None:
     """Render one business tab with upload and analysis controls.
 
@@ -77,48 +155,18 @@ def render_tab(tab_name: str) -> None:
         st.info("Upload a file to begin analysis.")
         return
 
-    parsed = parse_uploaded_file(uploaded_file)
+    try:
+        parse_uploaded_file(uploaded_file)
+    except Exception:
+        st.error("The uploaded file could not be processed. Please check the file format and try again.")
+        return
 
-    st.markdown("### Input Details")
-    st.write(
-        {
-            "tab": tab_name,
-            "timeline": timeline,
-            "timeline_start": str(timeline_start),
-            "timeline_end": str(timeline_end),
-            "target_line": target_line,
-            "file_name": uploaded_file.name,
-            "file_type": parsed["file_type"],
-        }
+    st.success(
+        f"**{uploaded_file.name}** uploaded successfully. "
+        f"Timeline: **{timeline}**. "
+        f"Target line: **{target_line or 'Not provided yet.'}**"
     )
-
-    st.markdown("### Data Dictionary")
-    st.json(DATA_DICTIONARY)
-
-    st.markdown("### Analysis")
-    if parsed["kind"] == "table":
-        dataframe = parsed["data"]
-        st.dataframe(dataframe.head(20), use_container_width=True)
-        st.write(build_analysis_summary(dataframe))
-
-        numeric_columns = dataframe.select_dtypes(include="number").columns.tolist()
-        if numeric_columns:
-            selected_column = st.selectbox(
-                "Choose numeric column for detailed statistics",
-                numeric_columns,
-                key=f"stats_col_{tab_name}",
-            )
-            st.write(get_column_statistics(dataframe, selected_column))
-        else:
-            st.warning("No numeric columns were detected for detailed statistics.")
-    else:
-        st.text_area(
-            label="Extracted text preview",
-            value=parsed["preview"],
-            height=220,
-            key=f"preview_{tab_name}",
-        )
-        st.write(parsed["analysis"])
+    st.info("Analysis will appear here once configured.")
 
 
 def main() -> None:

@@ -189,7 +189,7 @@ def render_tab(tab_name: str) -> None:
 
     # 3) Analysis options for next-stage business evaluation.
     st.markdown("### Analysis Options")
-    st.caption("Step 1: choose options. Step 2: choose one or more values for each selected option.")
+    st.caption("For each option: choose Yes/No with radio button. If Yes, choose one or more values.")
 
     option_definitions = {
         "Type of classification": ["Minor", "Major"],
@@ -199,23 +199,22 @@ def render_tab(tab_name: str) -> None:
         "Root cause": ["Supplier", "Equipment", "Human cause", "Procedure"],
     }
 
-    selected_option_names = st.multiselect(
-        "Select analysis options",
-        list(option_definitions.keys()),
-        default=[],
-        key=f"selected_option_names_{tab_name}",
-    )
-
     selected_analysis_options: list[dict[str, str]] = []
-    for option_name in option_definitions:
-        values_for_option = option_definitions[option_name]
+    for option_name, values_for_option in option_definitions.items():
         option_token = option_name.lower().replace(" ", "_")
 
+        use_option = st.radio(
+            f"Use {option_name}?",
+            options=["No", "Yes"],
+            horizontal=True,
+            key=f"use_{option_token}_{tab_name}",
+        )
+
         selected_values: list[str] = []
-        if option_name in selected_option_names:
+        if use_option == "Yes":
             selected_values = st.multiselect(
                 f"{option_name} values",
-                values_for_option,
+                options=values_for_option,
                 default=values_for_option,
                 key=f"{option_token}_values_{tab_name}",
             )
@@ -223,7 +222,7 @@ def render_tab(tab_name: str) -> None:
         selected_analysis_options.append(
             {
                 "Option": option_name,
-                "Status": "Selected" if option_name in selected_option_names else "Not selected",
+                "Status": "Selected" if use_option == "Yes" else "Not selected",
                 "Selection": ", ".join(selected_values) if selected_values else "No value selected",
             }
         )

@@ -187,7 +187,38 @@ def render_tab(tab_name: str) -> None:
     else:
         target_line = target_line_raw
 
-    # 3) File upload
+    # 3) Analysis options for next-stage business evaluation.
+    st.markdown("### Analysis Options")
+    opt_col1, opt_col2 = st.columns(2)
+    with opt_col1:
+        classification_type = st.selectbox(
+            "Type of classification",
+            ["Minor", "Major"],
+            key=f"classification_type_{tab_name}",
+        )
+        deviation_progress = st.selectbox(
+            "Deviation Progress",
+            ["Cancelled", "Close", "Ongoing"],
+            key=f"deviation_progress_{tab_name}",
+        )
+        summary_required = st.selectbox(
+            "Summary",
+            ["Yes", "No"],
+            key=f"summary_required_{tab_name}",
+        )
+    with opt_col2:
+        impact_on_ppvr = st.selectbox(
+            "Impact on PPVR",
+            ["Yes", "No"],
+            key=f"impact_on_ppvr_{tab_name}",
+        )
+        root_cause = st.selectbox(
+            "Root cause",
+            ["Supplier", "Equipment", "Human cause", "Procedure"],
+            key=f"root_cause_{tab_name}",
+        )
+
+    # 4) File upload
     uploaded_file = st.file_uploader(
         "Upload file (CSV, Excel, PDF, Word)",
         type=SUPPORTED_FILE_TYPES,
@@ -232,6 +263,17 @@ def render_tab(tab_name: str) -> None:
     # 6) Show evaluation results and filtered output.
     st.markdown("---")
     st.markdown("### Result of Input Evaluation")
+
+    st.markdown("#### Selected Analysis Options")
+    st.table(
+        [
+            {"Option": "Type of classification", "Selection": classification_type},
+            {"Option": "Deviation Progress", "Selection": deviation_progress},
+            {"Option": "Summary", "Selection": summary_required},
+            {"Option": "Impact on PPVR", "Selection": impact_on_ppvr},
+            {"Option": "Root cause", "Selection": root_cause},
+        ]
+    )
 
     if date_col is None:
         st.warning(

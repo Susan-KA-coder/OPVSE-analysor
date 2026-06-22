@@ -27,6 +27,7 @@ from analysis_functions import (
     SUPPORTED_FILE_TYPES,
     build_analysis_summary,
     filter_by_classification,
+    filter_by_deviation_progress,
     filter_by_target_line,
     filter_by_timeline,
     get_column_statistics,
@@ -299,8 +300,21 @@ def render_tab(tab_name: str) -> None:
                 classification_values = [val.strip() for val in selection_text.split(",")]
             break
     
-    df_final, removed_classification, classification_col, classification_counts = filter_by_classification(
+    df_after_classification, removed_classification, classification_col, classification_counts = filter_by_classification(
         df_after_target, classification_values
+    )
+
+    # 7) Extract deviation progress values from selected options and apply filter.
+    deviation_progress_values = []
+    for option in selected_analysis_options:
+        if option["Option"] == "Deviation Progress":
+            selection_text = option["Selection"]
+            if selection_text != "No value selected":
+                deviation_progress_values = [val.strip() for val in selection_text.split(",")]
+            break
+    
+    df_final, removed_deviation_progress, lifecycle_col, progress_counts = filter_by_deviation_progress(
+        df_after_classification, deviation_progress_values
     )
 
     # -------------------------------
@@ -326,13 +340,14 @@ def render_tab(tab_name: str) -> None:
         None,
     )
 
-    summary_col1, summary_col2, summary_col3, summary_col4, summary_col5 = st.columns(5)
-    # Five KPI cards summarize the filtering outcome.
+    summary_col1, summary_col2, summary_col3, summary_col4, summary_col5, summary_col6 = st.columns(6)
+    # Six KPI cards summarize the filtering outcome.
     summary_col1.metric("Total records in file", total_rows)
     summary_col2.metric("Removed — outside timeline", removed_timeline)
     summary_col3.metric("Removed — no target line match", removed_target)
     summary_col4.metric("Removed — classification filter", removed_classification)
-    summary_col5.metric("Records kept for analysis", len(df_final))
+    summary_col5.metric("Removed — deviation progress filter", removed_deviation_progress)
+    summary_col6.metric("Records kept for analysis", len(df_final))
 
     if len(df_final) == 0:
         st.error("No records remain after filtering. Check your timeline and target line settings.")
@@ -358,6 +373,18 @@ def render_tab(tab_name: str) -> None:
                 {"Classification Type": selected_type, "Records": int(count)}
             )
         st.table(selected_classification_results)
+
+    # Display selected deviation progress results if user selected specific types.
+    if deviation_progress_values and lifecycle_col:
+        st.markdown("#### Selected Deviation Progress Results")
+        selected_progress_results = []
+        for selected_progress in deviation_progress_values:
+            # Count records of this progress type in the final filtered dataframe
+            count = (df_final[lifecycle_col].astype(str).str.lower() == selected_progress.lower()).sum()
+            selected_progress_results.append(
+                {"Deviation Progress": selected_progress, "Records": int(count)}
+            )
+        st.table(selected_progress_results)
 
     if dv_col:
         # Show only DV identifiers as a compact quick-check list.

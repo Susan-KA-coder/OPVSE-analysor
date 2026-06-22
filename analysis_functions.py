@@ -264,6 +264,39 @@ def filter_by_classification(
 	return dataframe[mask].reset_index(drop=True), removed, classification_col, classification_counts
 
 
+def filter_by_deviation_progress(
+	dataframe: pd.DataFrame,
+	selected_values: list[str],
+) -> tuple[pd.DataFrame, int, str | None, dict[str, int]]:
+	"""Filter rows by lifecycle state column to match selected deviation progress values.
+
+	Args:
+		dataframe: Source dataset (already filtered by timeline, target line, and classification).
+		selected_values: List of deviation progress values to keep (e.g., ["Closed", "Cancelled"]).
+
+	Returns:
+		Tuple of (filtered_dataframe, removed_row_count, matched_column_name_or_None, progress_counts).
+	"""
+	if not selected_values:
+		return dataframe, 0, None, {}
+
+	lifecycle_col = find_column(
+		dataframe,
+		["lifecycle state", "lifecycle_state", "lifecyclestate", "state", "status", "deviation progress"],
+	)
+	if lifecycle_col is None:
+		return dataframe, 0, None, {}
+
+	# Get counts before filtering
+	progress_counts = dataframe[lifecycle_col].value_counts().to_dict()
+
+	# Create mask for rows matching selected values (case-insensitive)
+	mask = dataframe[lifecycle_col].astype(str).str.lower().isin([val.lower() for val in selected_values])
+	removed = int((~mask).sum())
+	
+	return dataframe[mask].reset_index(drop=True), removed, lifecycle_col, progress_counts
+
+
 def build_text_analysis(text: str) -> dict[str, Any]:
 	"""Generate simple text analysis for PDF and Word uploads.
 

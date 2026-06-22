@@ -274,7 +274,8 @@ def filter_by_deviation_progress(
 		dataframe: Source dataset (already filtered by timeline, target line, and classification).
 		selected_values: List of deviation progress values to keep (e.g., ["Closed", "Cancelled", "Ongoing"]).
 		
-		Special handling: If "Ongoing" is selected, it includes records that are NOT "Closed" and NOT "Cancelled".
+		Matching: Uses partial/substring matching (case-insensitive).
+		Special handling: If "Ongoing" is selected, it includes records that do NOT contain "Closed" and do NOT contain "Cancelled".
 
 	Returns:
 		Tuple of (filtered_dataframe, removed_row_count, matched_column_name_or_None, progress_counts).
@@ -292,24 +293,23 @@ def filter_by_deviation_progress(
 	# Get counts before filtering
 	progress_counts = dataframe[lifecycle_col].value_counts().to_dict()
 
-	# Create mask for rows matching selected values (case-insensitive)
+	# Create mask for rows matching selected values (case-insensitive, partial matching)
 	mask = pd.Series([False] * len(dataframe), index=dataframe.index)
+	lifecycle_lower = dataframe[lifecycle_col].astype(str).str.lower()
 	
 	# Check if "Ongoing" is in selected values
 	has_ongoing = any(val.lower() == "ongoing" for val in selected_values)
 	other_values = [val for val in selected_values if val.lower() != "ongoing"]
 	
-	# If "Ongoing" is selected, include records that are NOT "Closed" or "Cancelled"
+	# If "Ongoing" is selected, include records that do NOT contain "Closed" or "Cancelled"
 	if has_ongoing:
-		lifecycle_lower = dataframe[lifecycle_col].astype(str).str.lower()
-		ongoing_mask = ~lifecycle_lower.isin(["closed", "cancelled"])
+		ongoing_mask = ~(lifecycle_lower.str.contains("closed", na=False) | lifecycle_lower.str.contains("cancelled", na=False))
 		mask |= ongoing_mask
 	
-	# For other selected values, match them exactly
+	# For other selected values, use substring matching
 	if other_values:
-		lifecycle_lower = dataframe[lifecycle_col].astype(str).str.lower()
 		for val in other_values:
-			mask |= (lifecycle_lower == val.lower())
+			mask |= lifecycle_lower.str.contains(val.lower(), na=False, regex=False)
 	
 	removed = int((~mask).sum())
 	

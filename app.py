@@ -171,8 +171,8 @@ def render_tab(tab_name: str) -> None:
 
 def main() -> None:
     """Run the Streamlit application."""
-    st.set_page_config(page_title="Deviation and Change Request", layout="wide")
-    st.title("Deviation and Change Request Dashboard")
+    st.set_page_config(page_title="OPV/Se Analyzor", layout="wide")
+    st.title("OPV/Se Analyzor")
     st.caption("Upload a file in each tab and review baseline analysis.")
 
     deviation_tab, change_request_tab = st.tabs(["Deviation", "Change request"])

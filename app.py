@@ -19,7 +19,8 @@ from __future__ import annotations
 import os
 import re
 import io
-from datetime import date, timedelta
+import textwrap
+from datetime import date, datetime, timedelta
 
 # Third-party UI framework.
 from reportlab.lib.pagesizes import A4
@@ -368,38 +369,151 @@ def dataframe_to_excel_bytes(dataframe, impact_sheets: dict[str, pd.DataFrame] |
 
 
 def dataframe_to_pdf_bytes(dataframe) -> bytes:
-    """Return simple PDF bytes for a dataframe download."""
+    """Return branded PDF bytes for a dataframe download with wrapped rows."""
     buffer = io.BytesIO()
     pdf = canvas.Canvas(buffer, pagesize=A4)
     page_width, page_height = A4
-    left_margin = 36
-    top_y = page_height - 40
-    line_height = 14
+    left_margin = 28
+    right_margin = 28
+    top_margin = 36
+    bottom_margin = 32
+    usable_width = page_width - left_margin - right_margin
 
-    columns = [str(col) for col in dataframe.columns]
-    rows = dataframe.fillna("").astype(str).values.tolist()
+    max_columns = 6
+    all_columns = [str(col) for col in dataframe.columns]
+    selected_columns = all_columns[:max_columns]
+    rows = dataframe[selected_columns].fillna("").astype(str).values.tolist() if selected_columns else []
 
-    pdf.setFont("Helvetica-Bold", 10)
-    pdf.drawString(left_margin, top_y, "Filtered Records")
-    y = top_y - (line_height * 2)
+    def draw_page_header() -> float:
+        pdf.setFillColorRGB(0.06, 0.09, 0.16)
+        pdf.roundRect(left_margin, page_height - 64, usable_width, 28, 7, fill=1, stroke=0)
+        pdf.setFillColorRGB(1, 1, 1)
+        pdf.setFont("Helvetica-Bold", 11)
+        pdf.drawString(left_margin + 10, page_height - 47, "OPV/SE Analyzor - Filtered Records")
 
-    pdf.setFont("Helvetica", 8)
-    header_text = " | ".join(columns)
-    pdf.drawString(left_margin, y, header_text[:180])
-    y -= line_height
+        pdf.setFillColorRGB(0.2, 0.24, 0.31)
+        pdf.setFont("Helvetica", 8)
+        pdf.drawString(left_margin, page_height - 74, f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
+        return page_height - 92
 
-    for row in rows:
-        if y < 40:
+    def draw_table_header(y: float, columns: list[str], col_widths: list[float]) -> float:
+        pdf.setFillColorRGB(0.06, 0.46, 0.43)
+        pdf.rect(left_margin, y - 18, usable_width, 18, fill=1, stroke=0)
+        x = left_margin
+        pdf.setFillColorRGB(1, 1, 1)
+        pdf.setFont("Helvetica-Bold", 8)
+        for idx, col_name in enumerate(columns):
+            label = textwrap.shorten(col_name, width=max(8, int(col_widths[idx] / 4.5)), placeholder="...")
+            pdf.drawString(x + 4, y - 12, label)
+            x += col_widths[idx]
+        return y - 20
+
+    y = draw_page_header()
+
+    if not selected_columns:
+        pdf.setFillColorRGB(0.2, 0.24, 0.31)
+        pdf.setFont("Helvetica", 10)
+        pdf.drawString(left_margin, y, "No columns available to export.")
+        pdf.save()
+        buffer.seek(0)
+        return buffer.getvalue()
+
+    col_widths = [usable_width / len(selected_columns)] * len(selected_columns)
+    y = draw_table_header(y, selected_columns, col_widths)
+
+    for row_index, row in enumerate(rows):
+        wrapped_cells: list[list[str]] = []
+        max_lines = 1
+
+        for idx, value in enumerate(row):
+            width_chars = max(10, int(col_widths[idx] / 4.6))
+            cell_text = str(value).replace("\n", " ").strip()
+            wrapped = textwrap.wrap(cell_text[:700], width=width_chars) or [""]
+            wrapped = wrapped[:4]
+            wrapped_cells.append(wrapped)
+            max_lines = max(max_lines, len(wrapped))
+
+        row_height = 6 + (max_lines * 9)
+        if y - row_height < bottom_margin:
             pdf.showPage()
-            pdf.setFont("Helvetica", 8)
-            y = page_height - 40
-        line_text = " | ".join(row)
-        pdf.drawString(left_margin, y, line_text[:180])
-        y -= line_height
+            y = draw_page_header()
+            y = draw_table_header(y, selected_columns, col_widths)
+
+        if row_index % 2 == 0:
+            pdf.setFillColorRGB(0.95, 0.98, 0.98)
+            pdf.rect(left_margin, y - row_height, usable_width, row_height, fill=1, stroke=0)
+
+        pdf.setStrokeColorRGB(0.85, 0.89, 0.92)
+        pdf.setLineWidth(0.4)
+        pdf.line(left_margin, y - row_height, left_margin + usable_width, y - row_height)
+
+        x = left_margin
+        pdf.setFillColorRGB(0.08, 0.11, 0.15)
+        pdf.setFont("Helvetica", 7.6)
+        for idx, wrapped in enumerate(wrapped_cells):
+            line_y = y - 10
+            for line in wrapped:
+                pdf.drawString(x + 4, line_y, line)
+                line_y -= 8.5
+            x += col_widths[idx]
+
+        y -= row_height
+
+    if len(all_columns) > max_columns:
+        if y - 14 < bottom_margin:
+            pdf.showPage()
+            y = draw_page_header()
+        pdf.setFillColorRGB(0.36, 0.19, 0)
+        pdf.setFont("Helvetica-Oblique", 8)
+        pdf.drawString(
+            left_margin,
+            y - 12,
+            f"Note: Showing first {max_columns} of {len(all_columns)} columns in PDF. Download Excel for full detail.",
+        )
 
     pdf.save()
     buffer.seek(0)
     return buffer.getvalue()
+
+
+def render_ppvr_conclusion_banner(ppvr_impact_summary: dict[str, int]) -> None:
+    """Render a one-line final PPVR conclusion based on aggregated counts."""
+    reviewed = int(ppvr_impact_summary.get("Records reviewed", 0))
+    potential = int(ppvr_impact_summary.get("Potential PPVR impact", 0))
+    no_impact = int(ppvr_impact_summary.get("No identified impact", 0))
+    unclear = int(ppvr_impact_summary.get("Unclear / manual review", 0))
+
+    if reviewed <= 0:
+        return
+
+    if potential > max(no_impact, unclear):
+        headline = "Final PPVR Conclusion: Potential impact identified"
+        detail = f"{potential}/{reviewed} records were classified as potential impact."
+        background = "#fef3c7"
+        border = "#d97706"
+        text_color = "#7c2d12"
+    elif unclear >= max(potential, no_impact):
+        headline = "Final PPVR Conclusion: Manual review required"
+        detail = f"{unclear}/{reviewed} records are unclear and should be reviewed by SMEs."
+        background = "#fee2e2"
+        border = "#dc2626"
+        text_color = "#7f1d1d"
+    else:
+        headline = "Final PPVR Conclusion: No significant PPVR impact identified"
+        detail = f"{no_impact}/{reviewed} records were classified as no identified impact."
+        background = "#dcfce7"
+        border = "#16a34a"
+        text_color = "#14532d"
+
+    st.markdown(
+        f"""
+        <div style=\"margin:10px 0 14px 0;padding:10px 14px;border-left:6px solid {border};background:{background};border-radius:10px;\">
+            <div style=\"font-weight:700;color:{text_color};font-size:1.02rem;\">{headline}</div>
+            <div style=\"color:{text_color};font-size:0.93rem;\">{detail}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 def render_tab(tab_name: str) -> None:
@@ -709,6 +823,7 @@ def render_tab(tab_name: str) -> None:
     if ppvr_analysis_selected:
         st.markdown("#### PPVR Impact Evaluation")
         if ppvr_impact_summary:
+            render_ppvr_conclusion_banner(ppvr_impact_summary)
             ppvr_results = [
                 {"PPVR Assessment": label, "Fields": value}
                 for label, value in ppvr_impact_summary.items()

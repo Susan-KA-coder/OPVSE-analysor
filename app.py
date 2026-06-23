@@ -18,25 +18,29 @@ from __future__ import annotations
 # Standard library imports used for input validation and default dates.
 import os
 import re
+import io
 from datetime import date, timedelta
 
 # Third-party UI framework.
+from reportlab.lib.pagesizes import A4
+from reportlab.pdfgen import canvas
 import streamlit as st
 
 # Project-local analysis functions shared between tabs.
 from analysis_functions import (
     SUPPORTED_FILE_TYPES,
     build_analysis_summary,
-    evaluate_ppvr_impact_with_llm,
+    evaluate_ppvr_impact_with_local_llm,
+    evaluate_root_cause_with_local_llm,
     filter_by_classification,
     filter_by_deviation_progress,
     filter_by_target_line,
     filter_by_timeline,
     get_column_statistics,
     parse_uploaded_file,
-    summarize_selected_root_causes,
 )
 
+import pandas as pd
 # Project-local data dictionary used in the field guidance expander.
 from data_dictionary import DATA_DICTIONARY
 
@@ -139,10 +143,121 @@ def render_text_analysis(parsed: dict) -> None:
 
 
 def get_runtime_setting(name: str, default: str = "") -> str:
-    """Read a setting from Streamlit secrets first, then environment variables."""
-    if name in st.secrets:
-        return str(st.secrets[name])
+    """Read a setting from environment variables."""
     return os.getenv(name, default)
+
+
+def _resolve_impact_text_columns(dataframe, text_columns: list[str]) -> list[str]:
+    """Resolve text columns used to infer PPVR impact sheets."""
+    if text_columns:
+        return [col for col in text_columns if col in dataframe.columns]
+
+    fallback_candidates = [
+        "title",
+        "description",
+        "qa",
+        "conclusion",
+        "impact",
+        "justification",
+        "deviation",
+        "root cause",
+    ]
+    resolved: list[str] = []
+    for column_name in dataframe.columns:
+        col_lower = str(column_name).lower()
+        if any(token in col_lower for token in fallback_candidates):
+            resolved.append(column_name)
+    return resolved
+
+
+def build_ppvr_impact_sheets(dataframe, text_columns: list[str]) -> dict[str, pd.DataFrame]:
+    """Build record-level PPVR impact sheets by factor using keyword matching."""
+    factor_keywords = {
+        "Patient Safety": ["patient", "safety", "adverse", "harm", "injury", "risk"],
+        "Product Quality": ["quality", "defect", "nonconform", "specification", "failure"],
+        "Validation": ["validation", "validate", "verification", "verify", "qualification"],
+        "Regulatory Documentation": ["regulatory", "documentation", "compliance", "submission", "gmp"],
+    }
+
+    columns_for_scan = _resolve_impact_text_columns(dataframe, text_columns)
+    impact_sheets: dict[str, pd.DataFrame] = {}
+
+    for factor_name, keywords in factor_keywords.items():
+        matched_rows: list[dict[str, str]] = []
+
+        for _, row in dataframe.iterrows():
+            matched_fields: list[str] = []
+            matched_keywords: list[str] = []
+
+            for column_name in columns_for_scan:
+                value_text = str(row.get(column_name, "") or "")
+                value_lower = value_text.lower()
+                hits = [keyword for keyword in keywords if keyword in value_lower]
+                if hits:
+                    matched_fields.append(str(column_name))
+                    matched_keywords.extend(hits)
+
+            if matched_fields:
+                row_payload = {str(col): str(row.get(col, "") or "") for col in dataframe.columns}
+                row_payload["Matched fields"] = ", ".join(sorted(set(matched_fields)))
+                row_payload["Matched keywords"] = ", ".join(sorted(set(matched_keywords)))
+                matched_rows.append(row_payload)
+
+        if matched_rows:
+            impact_sheets[factor_name] = pd.DataFrame(matched_rows)
+        else:
+            impact_sheets[factor_name] = pd.DataFrame(
+                columns=["Matched fields", "Matched keywords"] + [str(col) for col in dataframe.columns]
+            )
+
+    return impact_sheets
+
+
+def dataframe_to_excel_bytes(dataframe, impact_sheets: dict[str, pd.DataFrame] | None = None) -> bytes:
+    """Return Excel bytes for a dataframe download, including impact sheets."""
+    buffer = io.BytesIO()
+    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+        dataframe.to_excel(writer, index=False, sheet_name="Filtered Records")
+        if impact_sheets:
+            for sheet_name, impact_df in impact_sheets.items():
+                safe_sheet_name = sheet_name[:31]
+                impact_df.to_excel(writer, index=False, sheet_name=safe_sheet_name)
+    return buffer.getvalue()
+
+
+def dataframe_to_pdf_bytes(dataframe) -> bytes:
+    """Return simple PDF bytes for a dataframe download."""
+    buffer = io.BytesIO()
+    pdf = canvas.Canvas(buffer, pagesize=A4)
+    page_width, page_height = A4
+    left_margin = 36
+    top_y = page_height - 40
+    line_height = 14
+
+    columns = [str(col) for col in dataframe.columns]
+    rows = dataframe.fillna("").astype(str).values.tolist()
+
+    pdf.setFont("Helvetica-Bold", 10)
+    pdf.drawString(left_margin, top_y, "Filtered Records")
+    y = top_y - (line_height * 2)
+
+    pdf.setFont("Helvetica", 8)
+    header_text = " | ".join(columns)
+    pdf.drawString(left_margin, y, header_text[:180])
+    y -= line_height
+
+    for row in rows:
+        if y < 40:
+            pdf.showPage()
+            pdf.setFont("Helvetica", 8)
+            y = page_height - 40
+        line_text = " | ".join(row)
+        pdf.drawString(left_margin, y, line_text[:180])
+        y -= line_height
+
+    pdf.save()
+    buffer.seek(0)
+    return buffer.getvalue()
 
 
 def render_tab(tab_name: str) -> None:
@@ -203,6 +318,10 @@ def render_tab(tab_name: str) -> None:
     st.markdown("### Analysis Options")
     st.caption("Select the options you want to use. For Summary and Impact on PPVR: selected means Yes, not selected means No.")
 
+    ppvr_model = "llama3.2:1b"
+    ppvr_base_url = "http://127.0.0.1:11434/v1"
+    ppvr_configured = True  # Local LLM is always available, but depends on Ollama being reachable.
+
     option_definitions = {
         "Type of classification": ["Minor", "Major"],
         "Deviation Progress": ["Cancelled", "Close", "Ongoing"],
@@ -215,10 +334,12 @@ def render_tab(tab_name: str) -> None:
 
     for option_name in binary_options:
         option_token = option_name.lower().replace(" ", "_")
+        is_ppvr_option = option_name == "Impact on PPVR"
         is_selected = st.checkbox(
             option_name,
             value=False,
             key=f"{option_token}_selected_{tab_name}",
+            disabled=is_ppvr_option and not ppvr_configured,
         )
         selected_analysis_options.append(
             {
@@ -226,6 +347,11 @@ def render_tab(tab_name: str) -> None:
                 "Status": "Selected" if is_selected else "Not selected",
                 "Selection": "Yes" if is_selected else "No",
             }
+        )
+
+    if not ppvr_configured:
+        st.info(
+            "PPVR analysis is disabled until the local LLM server is reachable."
         )
 
     for option_name, values_for_option in option_definitions.items():
@@ -339,31 +465,29 @@ def render_tab(tab_name: str) -> None:
 
     ppvr_impact_summary, ppvr_text_columns = ({}, [])
     ppvr_evaluation_error = ""
-    if ppvr_analysis_selected:
-        llm_api_key = get_runtime_setting("PPVR_LLM_API_KEY") or get_runtime_setting("OPENAI_API_KEY")
-        llm_model = get_runtime_setting("PPVR_LLM_MODEL", "gpt-4.1-mini")
-        llm_base_url = get_runtime_setting("PPVR_LLM_BASE_URL") or get_runtime_setting("OPENAI_BASE_URL")
+    if ppvr_analysis_selected and ppvr_configured:
+        try:
+            with st.spinner("Evaluating PPVR impact with Ollama..."):
+                ppvr_impact_summary, ppvr_text_columns = evaluate_ppvr_impact_with_local_llm(
+                    df_final,
+                    model=ppvr_model,
+                    base_url=ppvr_base_url,
+                )
+        except Exception as exc:
+            ppvr_evaluation_error = str(exc)
 
-        if llm_api_key:
-            try:
-                with st.spinner("Evaluating PPVR impact with the LLM..."):
-                    ppvr_impact_summary, ppvr_text_columns = evaluate_ppvr_impact_with_llm(
-                        df_final,
-                        api_key=llm_api_key,
-                        model=llm_model,
-                        base_url=llm_base_url or None,
-                    )
-            except Exception as exc:
-                ppvr_evaluation_error = str(exc)
-        else:
-            ppvr_evaluation_error = (
-                "PPVR LLM settings are not configured. Add PPVR_LLM_API_KEY and optionally "
-                "PPVR_LLM_MODEL / PPVR_LLM_BASE_URL in Streamlit secrets or environment variables."
-            )
-
-    root_cause_summary, root_cause_col = summarize_selected_root_causes(
-        df_final, root_cause_values
-    )
+    root_cause_summary, root_cause_text_columns = ({}, [])
+    root_cause_error = ""
+    if root_cause_values:
+        try:
+            with st.spinner("Evaluating root cause with Ollama..."):
+                root_cause_summary, root_cause_text_columns = evaluate_root_cause_with_local_llm(
+                    df_final,
+                    model=ppvr_model,
+                    base_url=ppvr_base_url,
+                )
+        except Exception as exc:
+            root_cause_error = str(exc)
 
     # -------------------------------
     # SECTION D: RESULTS TO USER
@@ -380,13 +504,6 @@ def render_tab(tab_name: str) -> None:
         )
     if not target_line:
         st.warning("No target line was entered. Target line filtering was skipped.")
-
-    # Try common DV column name variants for display.
-    dv_col_candidates = ["dv number", "dv_number", "dvnumber", "dv no", "dv"]
-    dv_col = next(
-        (col for col in df_final.columns if col.lower().strip() in dv_col_candidates),
-        None,
-    )
 
     summary_col1, summary_col2, summary_col3, summary_col4, summary_col5, summary_col6 = st.columns(6)
     # Six KPI cards summarize the filtering outcome.
@@ -461,35 +578,57 @@ def render_tab(tab_name: str) -> None:
             st.warning(ppvr_evaluation_error)
         else:
             st.info(
-                "PPVR impact could not be evaluated because Description, QA conclusion, "
-                "Conclusion, and Justification of Impact columns were not found."
+                "PPVR impact could not be evaluated because no PPVR text columns were detected."
             )
 
     if root_cause_values:
         st.markdown("#### Selected Root Cause Results")
-        if root_cause_summary and root_cause_col:
+        if root_cause_summary:
             st.table(root_cause_summary)
-            st.caption(f"Counts are based on the '{root_cause_col}' column.")
+            if root_cause_text_columns:
+                st.caption("LLM review based on text in: " + ", ".join(root_cause_text_columns))
         else:
-            st.info("A root cause column was not found in the filtered records.")
+            st.warning(root_cause_error or "Root cause analysis could not return results.")
 
-    if dv_col:
-        # Show only DV identifiers as a compact quick-check list.
-        st.markdown("#### DV Numbers in Scope")
-        st.dataframe(
-            df_final[[dv_col]].rename(columns={dv_col: "DV Number"}),
-            use_container_width=True,
-            hide_index=True,
+    # Use text from the first column in the uploaded sheet for DV scope display.
+    first_column_name = df_final.columns[0]
+    st.markdown("#### DV Numbers in Scope")
+    st.dataframe(
+        df_final[[first_column_name]].astype(str).rename(columns={first_column_name: "DV Number"}),
+        width="stretch",
+        hide_index=True,
+    )
+
+    st.markdown("#### Download Remaining Records")
+    preferred_download_format = st.radio(
+        "Choose your preferred download format",
+        options=["Excel (.xlsx)", "PDF (.pdf)"],
+        horizontal=True,
+        key=f"download_format_{tab_name}",
+    )
+    impact_sheets = build_ppvr_impact_sheets(df_final, ppvr_text_columns)
+
+    tab_slug = tab_name.lower().replace(" ", "_")
+    if preferred_download_format == "Excel (.xlsx)":
+        st.download_button(
+            label="Download remaining records as Excel",
+            data=dataframe_to_excel_bytes(df_final, impact_sheets=impact_sheets),
+            file_name=f"{tab_slug}_remaining_records.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            key=f"download_excel_{tab_name}",
         )
     else:
-        st.info(
-            "A 'DV number' column was not found in the file. "
-            f"{len(df_final)} records passed all filters."
+        st.download_button(
+            label="Download remaining records as PDF",
+            data=dataframe_to_pdf_bytes(df_final),
+            file_name=f"{tab_slug}_remaining_records.pdf",
+            mime="application/pdf",
+            key=f"download_pdf_{tab_name}",
         )
 
     st.markdown("#### Filtered Records")
     # Full records are still shown for traceability.
-    st.dataframe(df_final, use_container_width=True, hide_index=True)
+    st.dataframe(df_final, width="stretch", hide_index=True)
 
 
 # ============================================================================

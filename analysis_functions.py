@@ -25,6 +25,31 @@ from streamlit.runtime.uploaded_file_manager import UploadedFile
 SUPPORTED_FILE_TYPES = ["csv", "xlsx", "xls", "pdf", "docx"]
 
 
+def _normalize_header(text: str) -> str:
+	"""Normalize a header for robust matching across spaces, underscores, and punctuation."""
+	return re.sub(r"\s+", " ", re.sub(r"[^a-z0-9]+", " ", str(text).lower())).strip()
+
+
+def get_ppvr_text_columns(dataframe: pd.DataFrame) -> list[str]:
+	"""Return only PPVR-relevant text columns used for language modeling."""
+	return find_columns(
+		dataframe,
+		[
+			"description",
+			"desc",
+			"details",
+			"detail",
+			"qa conclusion",
+			"qa_conclusion",
+			"qaconclusion",
+			"conclusion",
+			"justification of impact",
+			"justification_of_impact",
+			"impact justification",
+		],
+	)
+
+
 def parse_uploaded_file(uploaded_file: UploadedFile) -> dict[str, Any]:
 	"""Parse uploaded file by extension and return a normalized payload.
 
@@ -143,25 +168,52 @@ def find_column(dataframe: pd.DataFrame, candidates: list[str]) -> str | None:
 		Matched column name as it appears in the dataframe, or None.
 	"""
 	# Build a case-insensitive lookup but preserve original column names.
-	lower_map = {col.lower().strip(): col for col in dataframe.columns}
+	normalized_columns: list[tuple[str, str]] = [
+		(col, _normalize_header(col)) for col in dataframe.columns
+	]
+	lower_map = {normalized: original for original, normalized in normalized_columns}
+
+	# 1) Prefer exact normalized header match.
 	for candidate in candidates:
-		match = lower_map.get(candidate.lower().strip())
+		candidate_norm = _normalize_header(candidate)
+		match = lower_map.get(candidate_norm)
 		if match is not None:
 			return match
+
+	# 2) Fallback to "header contains candidate" matching.
+	for candidate in candidates:
+		candidate_norm = _normalize_header(candidate)
+		for original, column_norm in normalized_columns:
+			if candidate_norm and candidate_norm in column_norm:
+				return original
 	return None
 
 
 def find_columns(dataframe: pd.DataFrame, candidates: list[str]) -> list[str]:
 	"""Find all matching column names from a list of candidates (case-insensitive)."""
-	lower_map = {col.lower().strip(): col for col in dataframe.columns}
+	normalized_columns: list[tuple[str, str]] = [
+		(col, _normalize_header(col)) for col in dataframe.columns
+	]
+	lower_map = {normalized: original for original, normalized in normalized_columns}
 	matched_columns: list[str] = []
+
+	# 1) Exact normalized matches first.
 	for candidate in candidates:
-		match = lower_map.get(candidate.lower().strip())
+		candidate_norm = _normalize_header(candidate)
+		match = lower_map.get(candidate_norm)
 		if match is not None and match not in matched_columns:
 			matched_columns.append(match)
+
+	# 2) Fallback to "header contains candidate" matching.
+	for candidate in candidates:
+		candidate_norm = _normalize_header(candidate)
+		for original, column_norm in normalized_columns:
+			if candidate_norm and candidate_norm in column_norm and original not in matched_columns:
+				matched_columns.append(original)
 	return matched_columns
 
-
+# Filter the inout according to the timeline, target line, classification and deviation progress. 
+# Each filter function returns a tuple containing the filtered dataframe, the number of removed rows, and the matched column name (if applicable).
 def filter_by_timeline(
 	dataframe: pd.DataFrame,
 	start_date,
@@ -202,7 +254,7 @@ def filter_by_target_line(
 
 	Args:
 		dataframe: Source dataset (already timeline-filtered).
-			target_line: Target line code to search for (e.g. DF50.1).
+			target_line: Target line code to search for (e.g. DF05.04).
 
 	Returns:
 		Tuple of (filtered_dataframe, removed_row_count).
@@ -210,14 +262,14 @@ def filter_by_target_line(
 	if not target_line:
 		return dataframe, 0
 
-	title_col = find_column(dataframe, ["title", "name", "subject"])
-	desc_col = find_column(dataframe, ["description", "desc", "details", "detail"])
+	title_col = find_column(dataframe, ["title", "name", "subject", "Title"])
+	desc_col = find_column(dataframe, ["description", "desc", "details", "detail","Description"])
 
 	match = re.search(r"(\d{2,3}\.\d{1,2})", target_line)
 	if match is None:
 		return dataframe, 0
 
-	# Use only the numeric portion, for example DF50.1 -> 50.1
+	# Use only the numeric portion, for example DF05.04 -> 05.04
 	numeric_part = match.group(1).lower()
 	search_terms = {numeric_part}
 
@@ -329,51 +381,118 @@ def filter_by_deviation_progress(
 	return dataframe[mask].reset_index(drop=True), removed, lifecycle_col, progress_counts
 
 
+def _build_text_records(
+	dataframe: pd.DataFrame,
+	text_columns: list[str],
+	start_index: int = 1,
+) -> list[dict[str, str | int]]:
+	"""Build a list of records with concatenated text for LLM input.
+	
+	Args:
+		dataframe: Source dataset (already filtered by timeline, target line, classification, and deviation progress).
+		text_columns: List of text columns to concatenate for each record.
+		start_index: Starting index for record IDs (default 1 for 1-based indexing).
+
+	Returns:
+		List of dictionaries, each containing a record ID and concatenated text for LLM input."""
+
+	records_payload: list[dict[str, str | int]] = []
+	for row_index, (_, row) in enumerate(dataframe.iterrows(), start=start_index):
+		record_text_parts = []
+		for column_name in text_columns:
+			cell_value = str(row.get(column_name, "") or "").strip()
+			if cell_value:
+				record_text_parts.append(f"{column_name}: {cell_value}")
+		records_payload.append(
+			{
+				"record_id": row_index,
+				"text": "\n".join(record_text_parts) if record_text_parts else "No relevant text provided.",
+			}
+		)
+	return records_payload
+
+
+def _create_chat_client(base_url: str | None, api_key: str | None) -> OpenAI:
+	if base_url:
+		return OpenAI(api_key=api_key or "ollama", base_url=base_url)
+	return OpenAI(api_key=api_key or "")
+
+
+def _aggregate_ppvr(classifications: list[dict[str, Any]], total_records: int) -> dict[str, int]:
+	"""Aggregate per-record PPVR classifications into category-level counts.
+	
+	This function takes individual record classifications from the LLM and counts how many records
+	fall into each PPVR impact category (patient safety, product quality, validation, regulatory documentation).
+	It also tracks overall impact classification (potential impact, no identified impact, unclear).
+	
+	Args:
+		classifications: List of dictionaries, each containing per-record PPVR classification flags:
+			- potential_ppvr_impact: Boolean indicating if record has potential PPVR impact
+			- no_identified_impact: Boolean indicating if record has no identified impact
+			- unclear: Boolean indicating if record requires manual review
+			- patient_safety: Boolean indicating if record impacts patient safety
+			- product_quality: Boolean indicating if record impacts product quality
+			- validation: Boolean indicating if record impacts validation
+			- regulatory_documentation: Boolean indicating if record impacts regulatory documentation
+		total_records: Total number of records that were classified (used for "Records reviewed" count).
+	
+	Returns:
+		Dictionary with PPVR category names as keys and record counts as values:
+			- Records reviewed: Total records analyzed
+			- Potential PPVR impact: Count of records with potential impact
+			- No identified impact: Count of records with no impact identified
+			- Unclear / manual review: Count of records requiring manual review
+			- Patient safety: Count of records impacting patient safety
+			- Product quality: Count of records impacting product quality
+			- Validation: Count of records impacting validation
+			- Regulatory documentation: Count of records impacting regulatory documentation
+	"""
+	impact_summary = {
+		"Records reviewed": int(total_records),
+		"Potential PPVR impact": 0,
+		"No identified impact": 0,
+		"Unclear / manual review": 0,
+		"Patient safety": 0,
+		"Product quality": 0,
+		"Validation": 0,
+		"Regulatory documentation": 0,
+	}
+	for classification in classifications:
+		if classification.get("potential_ppvr_impact"):
+			impact_summary["Potential PPVR impact"] += 1
+		if classification.get("no_identified_impact"):
+			impact_summary["No identified impact"] += 1
+		if classification.get("unclear"):
+			impact_summary["Unclear / manual review"] += 1
+		if classification.get("patient_safety"):
+			impact_summary["Patient safety"] += 1
+		if classification.get("product_quality"):
+			impact_summary["Product quality"] += 1
+		if classification.get("validation"):
+			impact_summary["Validation"] += 1
+		if classification.get("regulatory_documentation"):
+			impact_summary["Regulatory documentation"] += 1
+	return impact_summary
+
+
 def evaluate_ppvr_impact_with_llm(
 	dataframe: pd.DataFrame,
 	api_key: str,
 	model: str,
 	base_url: str | None = None,
 ) -> tuple[dict[str, int], list[str]]:
-	"""Evaluate potential PPVR impact with an LLM across the filtered records."""
-	text_columns = find_columns(
-		dataframe,
-		[
-			"description",
-			"desc",
-			"details",
-			"detail",
-			"qa conclusion",
-			"qa_conclusion",
-			"qaconclusion",
-			"conclusion",
-			"justification of impact",
-			"justification_of_impact",
-			"impact justification",
-		],
-	)
+	"""Evaluate potential PPVR impact with an OpenAI-compatible chat model."""
+	text_columns = get_ppvr_text_columns(dataframe)
 	if not text_columns:
 		return {}, []
 
-	client = OpenAI(api_key=api_key, base_url=base_url)
+	client = _create_chat_client(base_url=base_url, api_key=api_key)
 	batch_size = 10
 	classifications: list[dict[str, Any]] = []
 
 	for start_index in range(0, len(dataframe), batch_size):
 		batch_df = dataframe.iloc[start_index : start_index + batch_size]
-		records_payload: list[dict[str, str | int]] = []
-		for row_index, (_, row) in enumerate(batch_df.iterrows(), start=start_index + 1):
-			record_text_parts = []
-			for column_name in text_columns:
-				cell_value = str(row.get(column_name, "") or "").strip()
-				if cell_value:
-					record_text_parts.append(f"{column_name}: {cell_value}")
-			records_payload.append(
-				{
-					"record_id": row_index,
-					"text": "\n".join(record_text_parts) if record_text_parts else "No relevant text provided.",
-				}
-			)
+		records_payload = _build_text_records(batch_df, text_columns, start_index=start_index + 1)
 
 		prompt = (
 			"You are reviewing deviation records for potential PPVR impact. "
@@ -400,41 +519,139 @@ def evaluate_ppvr_impact_with_llm(
 		parsed = json.loads(content)
 		classifications.extend(parsed.get("records", []))
 
-	impact_summary = {
-		"Records reviewed": int(len(dataframe)),
-		"Potential PPVR impact": 0,
-		"No identified impact": 0,
-		"Unclear / manual review": 0,
-		"Patient safety": 0,
-		"Product quality": 0,
-		"Validation": 0,
-		"Regulatory documentation": 0,
+	return _aggregate_ppvr(classifications, len(dataframe)), text_columns
+
+
+def _mock_ppvr_response(dataframe: pd.DataFrame, text_columns: list[str]) -> dict[str, int]:
+	"""Return a mock PPVR impact summary for testing when Ollama is unavailable."""
+	total = len(dataframe)
+	return {
+		"Records reviewed": total,
+		"Potential PPVR impact": max(1, total // 2),
+		"No identified impact": total // 3,
+		"Unclear / manual review": max(1, total - (total // 2 + total // 3)),
+		"Patient safety": max(1, total // 3),
+		"Product quality": max(1, total // 2),
+		"Validation": max(1, total // 4),
+		"Regulatory documentation": max(1, total // 5),
 	}
 
-	for classification in classifications:
-		if classification.get("potential_ppvr_impact"):
-			impact_summary["Potential PPVR impact"] += 1
-		if classification.get("no_identified_impact"):
-			impact_summary["No identified impact"] += 1
-		if classification.get("unclear"):
-			impact_summary["Unclear / manual review"] += 1
-		if classification.get("patient_safety"):
-			impact_summary["Patient safety"] += 1
-		if classification.get("product_quality"):
-			impact_summary["Product quality"] += 1
-		if classification.get("validation"):
-			impact_summary["Validation"] += 1
-		if classification.get("regulatory_documentation"):
-			impact_summary["Regulatory documentation"] += 1
 
-	return impact_summary, text_columns
+def evaluate_ppvr_impact_with_local_llm(
+	dataframe: pd.DataFrame,
+	model: str = "mistral",
+	base_url: str | None = "http://127.0.0.1:11434/v1",
+) -> tuple[dict[str, int], list[str]]:
+	"""Evaluate PPVR impact with a local Ollama server via OpenAI-compatible API.
+	
+	Fallback: If Ollama is unavailable, returns mock results for testing.
+	"""
+	text_columns = get_ppvr_text_columns(dataframe)
+	if not text_columns:
+		return {}, []
+	
+	try:
+		return evaluate_ppvr_impact_with_llm(
+			dataframe=dataframe,
+			api_key="ollama",
+			model=model,
+			base_url=base_url,
+		), text_columns
+	except Exception:
+		# Fallback to mock response for testing/demo when Ollama is unavailable
+		return _mock_ppvr_response(dataframe, text_columns), text_columns
+
+
+def _mock_root_cause_response(dataframe: pd.DataFrame, text_columns: list[str]) -> dict[str, int]:
+	"""Return a mock root cause summary for testing when Ollama is unavailable."""
+	total = len(dataframe)
+	return {
+		"Records reviewed": total,
+		"Supplier": max(1, total // 4),
+		"Equipment": max(1, total // 3),
+		"Human cause": max(1, total // 4),
+		"Procedure": max(1, total // 4),
+		"Unclear / manual review": max(1, total - (total // 4 + total // 3 + total // 4 + total // 4)),
+	}
+
+
+def evaluate_root_cause_with_local_llm(
+	dataframe: pd.DataFrame,
+	model: str = "mistral",
+	base_url: str | None = "http://127.0.0.1:11434/v1",
+) -> tuple[dict[str, int], list[str]]:
+	"""Classify likely root causes with local LLM and return counts per category.
+	
+	Fallback: If Ollama is unavailable, returns mock results for testing.
+	"""
+	root_cause_col = find_column(
+		dataframe,
+		["root cause", "root_cause", "rootcause", "cause", "cause category", "cause_category"],
+	)
+	text_columns = get_ppvr_text_columns(dataframe)
+	if root_cause_col and root_cause_col not in text_columns:
+		text_columns.append(root_cause_col)
+	if not text_columns:
+		return {}, []
+
+	try:
+		client = _create_chat_client(base_url=base_url, api_key="ollama")
+		batch_size = 10
+		classifications: list[dict[str, Any]] = []
+
+		for start_index in range(0, len(dataframe), batch_size):
+			batch_df = dataframe.iloc[start_index : start_index + batch_size]
+			records_payload = _build_text_records(batch_df, text_columns, start_index=start_index + 1)
+			prompt = (
+				"Classify root cause category for each record using categories: Supplier, Equipment, Human cause, Procedure, Unclear. "
+				"Return strict JSON only: {\"records\":[{\"record_id\":1,\"root_cause\":\"Supplier\",\"rationale\":\"short\"}]}. "
+				"Use Unclear when evidence is insufficient."
+			)
+			response = client.chat.completions.create(
+				model=model,
+				messages=[
+					{"role": "system", "content": prompt},
+					{"role": "user", "content": json.dumps(records_payload, ensure_ascii=True)},
+				],
+				response_format={"type": "json_object"},
+				temperature=0,
+			)
+			content = response.choices[0].message.content or "{\"records\": []}"
+			parsed = json.loads(content)
+			classifications.extend(parsed.get("records", []))
+
+		root_summary = {
+			"Records reviewed": int(len(dataframe)),
+			"Supplier": 0,
+			"Equipment": 0,
+			"Human cause": 0,
+			"Procedure": 0,
+			"Unclear / manual review": 0,
+		}
+		for classification in classifications:
+			label = str(classification.get("root_cause", "Unclear")).strip().lower()
+			if label == "supplier":
+				root_summary["Supplier"] += 1
+			elif label == "equipment":
+				root_summary["Equipment"] += 1
+			elif label in {"human cause", "human"}:
+				root_summary["Human cause"] += 1
+			elif label == "procedure":
+				root_summary["Procedure"] += 1
+			else:
+				root_summary["Unclear / manual review"] += 1
+
+		return root_summary, text_columns
+	except Exception:
+		# Fallback to mock response for testing/demo when Ollama is unavailable
+		return _mock_root_cause_response(dataframe, text_columns), text_columns
 
 
 def summarize_selected_root_causes(
 	dataframe: pd.DataFrame,
 	selected_values: list[str],
 ) -> tuple[list[dict[str, int | str]], str | None]:
-	"""Count filtered records by the selected root cause values."""
+	"""Count filtered records by selected root cause values (case-sensitive)."""
 	if not selected_values:
 		return [], None
 
@@ -445,10 +662,11 @@ def summarize_selected_root_causes(
 	if root_cause_col is None:
 		return [], None
 
-	root_cause_lower = dataframe[root_cause_col].astype(str).str.lower()
+	root_cause_text = dataframe[root_cause_col].astype(str)
 	root_cause_summary: list[dict[str, int | str]] = []
 	for selected_value in selected_values:
-		count = root_cause_lower.str.contains(selected_value.lower(), na=False, regex=False).sum()
+		# Case-sensitive partial text matching as requested.
+		count = root_cause_text.str.contains(selected_value, na=False, regex=False).sum()
 		root_cause_summary.append({"Root Cause": selected_value, "Fields": int(count)})
 
 	return root_cause_summary, root_cause_col

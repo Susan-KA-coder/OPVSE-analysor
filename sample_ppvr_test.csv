@@ -1,0 +1,4 @@
+Date occurred,Title,Description,DV Number,Type of classification,Lifecycle State,Root Cause Category,Deviation Description (EN),QA Conclusion Text
+2026/06/20,DF50.1 filling line deviation,Operator found a contamination issue on DF50.1 during filling,DF-001,Major,Open,Equipment,Contamination noted at the filling line with cleaning gap,QA concluded this deviation may affect product quality and requires investigation
+2026/06/21,DF50.1 packaging delay,Packaging delay on DF50.1 caused by missing label stock,DF-002,Minor,Closed,Supplier,Missing labels delayed release and may affect documentation traceability,QA concluded this is a supplier-related supply interruption and paperwork review is needed
+2026/06/22,DF50.1 training record gap,Training record gap for DF50.1 shift handover,DF-003,Major,Ongoing,Human cause,Shift handover records were incomplete for DF50.1,QA concluded the issue may affect validation and procedural compliance

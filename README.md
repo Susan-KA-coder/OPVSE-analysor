@@ -76,6 +76,31 @@ python -m streamlit run app.py
 
 The app should open in your browser automatically.
 
+## PPVR Analysis Setup
+
+PPVR analysis is optional and only works when an OpenAI-compatible API key is configured.
+
+Set one of these in Streamlit secrets or environment variables:
+
+- `PPVR_LLM_API_KEY` or `OPENAI_API_KEY`
+- `PPVR_LLM_MODEL` or `OPENAI_MODEL` if you want to override the default model
+- `PPVR_LLM_BASE_URL` or `OPENAI_BASE_URL` if you use a non-default API endpoint
+
+For local development:
+
+1. Copy [.streamlit/secrets.toml.example](.streamlit/secrets.toml.example) to `.streamlit/secrets.toml`.
+2. Replace the placeholder value with your real API key.
+3. Restart Streamlit.
+
+Example PowerShell session variable setup for the current terminal only:
+
+```powershell
+$env:PPVR_LLM_API_KEY = "your-api-key-here"
+python -m streamlit run app.py
+```
+
+For Streamlit Community Cloud, add the same keys under App > Settings > Secrets.
+
 ## Notes
 
 - This is the initial scaffold. Analysis logic is intentionally generic for now.

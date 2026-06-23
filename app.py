@@ -51,6 +51,148 @@ from data_dictionary import DATA_DICTIONARY
 # ============================================================================
 
 
+def apply_custom_theme() -> None:
+    """Apply a custom visual theme to improve readability and hierarchy."""
+    st.markdown(
+        """
+        <style>
+        @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=Source+Sans+3:wght@400;600;700&display=swap');
+
+        :root {
+            --brand-ink: #0f172a;
+            --brand-sea: #0f766e;
+            --brand-amber: #d97706;
+            --brand-slate: #334155;
+            --brand-surface: #f8fafc;
+            --brand-card: #ffffff;
+            --brand-border: #cbd5e1;
+            --brand-success: #0ea5a4;
+        }
+
+        .stApp {
+            font-family: 'Source Sans 3', sans-serif;
+            background:
+                radial-gradient(circle at 15% 8%, rgba(20, 184, 166, 0.12), transparent 28%),
+                radial-gradient(circle at 90% 0%, rgba(245, 158, 11, 0.14), transparent 30%),
+                linear-gradient(180deg, #f8fafc 0%, #eef2ff 100%);
+        }
+
+        h1, h2, h3, h4 {
+            font-family: 'Space Grotesk', sans-serif !important;
+            color: var(--brand-ink);
+            letter-spacing: 0.01em;
+        }
+
+        .stCaption {
+            color: var(--brand-slate) !important;
+            font-size: 0.98rem !important;
+        }
+
+        .block-container {
+            padding-top: 1.8rem !important;
+            padding-bottom: 2.5rem !important;
+        }
+
+        div[data-testid="stMetric"] {
+            background: var(--brand-card);
+            border: 1px solid var(--brand-border);
+            border-left: 0.35rem solid var(--brand-sea);
+            border-radius: 0.8rem;
+            padding: 0.65rem 0.8rem;
+            box-shadow: 0 8px 24px rgba(15, 23, 42, 0.08);
+            min-height: 108px;
+        }
+
+        div[data-testid="stMetricLabel"] {
+            color: var(--brand-slate) !important;
+            font-weight: 700 !important;
+            font-size: 0.88rem !important;
+        }
+
+        div[data-testid="stMetricValue"] {
+            color: var(--brand-ink) !important;
+            font-family: 'Space Grotesk', sans-serif !important;
+            font-size: 2rem !important;
+            line-height: 1.1;
+        }
+
+        div[data-testid="stFileUploader"] {
+            border: 2px dashed #94a3b8 !important;
+            border-radius: 0.9rem !important;
+            background: rgba(255, 255, 255, 0.66) !important;
+            padding: 0.35rem;
+        }
+
+        .stButton > button, .stDownloadButton > button {
+            border-radius: 0.7rem !important;
+            border: 1px solid #0f766e !important;
+            font-weight: 700 !important;
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }
+
+        .stDownloadButton > button {
+            background: linear-gradient(135deg, #0f766e 0%, #0ea5a4 100%) !important;
+            color: #ffffff !important;
+            border: 0 !important;
+        }
+
+        .stButton > button:hover, .stDownloadButton > button:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 10px 22px rgba(15, 118, 110, 0.28);
+        }
+
+        div[data-testid="stDataFrame"] {
+            border: 1px solid var(--brand-border);
+            border-radius: 0.8rem;
+            overflow: hidden;
+            box-shadow: 0 8px 20px rgba(15, 23, 42, 0.07);
+            background: #ffffff;
+        }
+
+        div[data-testid="stTable"] {
+            border: 1px solid var(--brand-border);
+            border-radius: 0.8rem;
+            overflow: hidden;
+            background: #ffffff;
+        }
+
+        [data-testid="stHorizontalBlock"] > div {
+            animation: revealUp 0.35s ease-out;
+        }
+
+        @keyframes revealUp {
+            from {
+                opacity: 0;
+                transform: translateY(8px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def section_card_start(title: str) -> None:
+    """Render a styled section header card."""
+    st.markdown(
+        f"""
+        <div style=\"background:#ffffff;border:1px solid #cbd5e1;border-radius:14px;padding:12px 16px;box-shadow:0 8px 22px rgba(15,23,42,0.08);margin:6px 0 14px 0;\">
+            <h3 style=\"margin:0;color:#0f172a;\">{title}</h3>
+            <p style=\"margin:4px 0 0 0;color:#334155;font-size:0.95rem;\">Review inputs and outputs with a cleaner visual layout.</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def section_card_end() -> None:
+    """No-op helper kept for readability in render flow."""
+
+
 def render_data_dictionary() -> None:
     """Render business field guidance used by this app.
 
@@ -273,7 +415,7 @@ def render_tab(tab_name: str) -> None:
     # -------------------------------
     # SECTION A: INPUT COLLECTION
     # -------------------------------
-    st.subheader(f"{tab_name} Input")
+    section_card_start(f"{tab_name} Input")
 
     # 1) Timeline input (date range)
     col1, col2 = st.columns(2)
@@ -394,6 +536,7 @@ def render_tab(tab_name: str) -> None:
         type=SUPPORTED_FILE_TYPES,
         key=f"upload_{tab_name}",
     )
+    section_card_end()
 
     if not uploaded_file:
         st.info("Upload a file to begin analysis.")
@@ -493,8 +636,7 @@ def render_tab(tab_name: str) -> None:
     # SECTION D: RESULTS TO USER
     # -------------------------------
     # 6) Show evaluation results and filtered output.
-    st.markdown("---")
-    st.markdown("### Result of Input Evaluation")
+    section_card_start("Result of Input Evaluation")
 
     if date_col is None:
         st.warning(
@@ -516,6 +658,7 @@ def render_tab(tab_name: str) -> None:
 
     if len(df_final) == 0:
         st.error("No records remain after filtering. Check your timeline and target line settings.")
+        section_card_end()
         return
 
     # Display classification breakdown if the classification column was found.
@@ -629,6 +772,7 @@ def render_tab(tab_name: str) -> None:
     st.markdown("#### Filtered Records")
     # Full records are still shown for traceability.
     st.dataframe(df_final, width="stretch", hide_index=True)
+    section_card_end()
 
 
 # ============================================================================
@@ -638,6 +782,7 @@ def render_tab(tab_name: str) -> None:
 def main() -> None:
     """Run the Streamlit application."""
     st.set_page_config(page_title="OPV/SE Analyzor", layout="wide")
+    apply_custom_theme()
     st.title("OPV/SE Analyzor")
     st.caption("Upload a file in each tab and review baseline analysis.")
 

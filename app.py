@@ -33,13 +33,18 @@ from analysis_functions import (
     build_analysis_summary,
     evaluate_ppvr_impact_with_local_llm,
     evaluate_root_cause_with_local_llm,
-    filter_by_classification,
     filter_by_deviation_progress,
     filter_by_target_line,
     filter_by_timeline,
     get_column_statistics,
     parse_uploaded_file,
 )
+
+# Project-local Deviation-specific analysis functions.
+from analysis_functions_deviation import filter_by_classification
+
+# Project-local tab-specific rendering.
+from change_request_tab import render_change_request_tab as render_change_request_analysis
 
 import pandas as pd
 # Project-local data dictionary used in the field guidance expander.
@@ -356,20 +361,131 @@ def build_ppvr_impact_sheets(dataframe, text_columns: list[str]) -> dict[str, pd
     return impact_sheets
 
 
-def dataframe_to_excel_bytes(dataframe, impact_sheets: dict[str, pd.DataFrame] | None = None) -> bytes:
-    """Return Excel bytes for a dataframe download, including impact sheets."""
+# Columns that are always stripped from exported files (Excel and PDF) regardless
+# of which tab is active.  Matching is case-insensitive substring containment.
+EXPORT_COLUMN_EXCLUDE_PATTERNS = [
+    "date closed",
+    "change resp. execution approval date",
+    "change execution qa approval date",
+    "change resp. evaluation approval date",
+]
+
+# In the Change Request tab all columns whose header contains the word 'date'
+# are removed from exports, EXCEPT for the column below which is retained
+# because it carries meaningful approval timing information.
+CHANGE_REQUEST_DATE_COLUMN_KEEP = "change qa approval date"
+
+def _normalize_header(value: str) -> str:
+    """Normalize a column header for case-insensitive comparison.
+
+    Args:
+        value: Raw column header string (may contain mixed case or extra whitespace).
+
+    Returns:
+        Lower-cased string with consecutive whitespace collapsed to a single space.
+    """
+    return re.sub(r"\s+", " ", str(value).strip().lower())
+
+
+def remove_export_excluded_columns(dataframe: pd.DataFrame, tab_name: str | None = None) -> pd.DataFrame:
+    """Remove columns that should not appear in downloaded export files.
+
+    Two layers of filtering are applied:
+
+    1. Global exclusions (``EXPORT_COLUMN_EXCLUDE_PATTERNS``): certain columns
+       are always stripped across all tabs because they contain no useful output
+       information (e.g. 'Date Closed', various approval date variants).
+
+    2. Change Request tab-specific rule: when *tab_name* is 'Change request',
+       any column whose header contains the word 'date' is removed, with the
+       single exception of the column that exactly matches
+       ``CHANGE_REQUEST_DATE_COLUMN_KEEP`` ('Change QA Approval Date'), which is
+       retained because it carries meaningful approval timing information.
+
+    Matching is always case-insensitive and whitespace-normalised.
+
+    Args:
+        dataframe: Source DataFrame to filter.  The original is not modified.
+        tab_name:  Display name of the active business tab (e.g. 'Deviation' or
+                   'Change request').  Pass ``None`` to apply only global rules.
+
+    Returns:
+        A new DataFrame containing only the columns that passed all filters.
+    """
+    tab_name_normalized = _normalize_header(tab_name or "")
+    kept_columns: list[str] = []
+    for column_name in dataframe.columns:
+        header_normalized = _normalize_header(column_name)
+
+        if any(excluded_text in header_normalized for excluded_text in EXPORT_COLUMN_EXCLUDE_PATTERNS):
+            continue
+
+        if tab_name_normalized == "change request" and "date" in header_normalized:
+            if header_normalized != CHANGE_REQUEST_DATE_COLUMN_KEEP:
+                continue
+
+        kept_columns.append(column_name)
+
+    return dataframe.loc[:, kept_columns].copy()
+
+
+def dataframe_to_excel_bytes(
+    dataframe,
+    impact_sheets: dict[str, pd.DataFrame] | None = None,
+    tab_name: str | None = None,
+) -> bytes:
+    """Serialise a filtered DataFrame to an in-memory Excel workbook.
+
+    The main DataFrame is written to a sheet named 'Filtered Records'.  Any
+    supplementary PPVR impact DataFrames supplied via *impact_sheets* are each
+    written to their own sheet (name truncated to 31 characters to satisfy the
+    Excel limit).  All sheets go through ``remove_export_excluded_columns`` so
+    that date-related and other unwanted columns are absent from every sheet.
+
+    Args:
+        dataframe:     The primary filtered DataFrame to export.
+        impact_sheets: Optional mapping of sheet name to DataFrame for PPVR
+                       impact detail sheets.  Pass ``None`` to skip.
+        tab_name:      Active tab name forwarded to the column-exclusion logic
+                       so that tab-specific rules (e.g. Change Request date
+                       column removal) are applied correctly.
+
+    Returns:
+        Raw bytes of a valid ``.xlsx`` file ready to be served as a download.
+    """
+    export_dataframe = remove_export_excluded_columns(dataframe, tab_name=tab_name)
     buffer = io.BytesIO()
     with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-        dataframe.to_excel(writer, index=False, sheet_name="Filtered Records")
+        export_dataframe.to_excel(writer, index=False, sheet_name="Filtered Records")
         if impact_sheets:
             for sheet_name, impact_df in impact_sheets.items():
                 safe_sheet_name = sheet_name[:31]
-                impact_df.to_excel(writer, index=False, sheet_name=safe_sheet_name)
+                remove_export_excluded_columns(impact_df, tab_name=tab_name).to_excel(
+                    writer,
+                    index=False,
+                    sheet_name=safe_sheet_name,
+                )
     return buffer.getvalue()
 
 
-def dataframe_to_pdf_bytes(dataframe) -> bytes:
-    """Return branded PDF bytes for a dataframe download with wrapped rows."""
+def dataframe_to_pdf_bytes(dataframe, tab_name: str | None = None) -> bytes:
+    """Serialise a filtered DataFrame to an in-memory branded PDF document.
+
+    Renders up to the first six columns of the DataFrame as a paginated table
+    with the application's colour scheme.  Columns are first passed through
+    ``remove_export_excluded_columns`` so that date-related and other unwanted
+    columns are excluded before deciding which six columns to show.
+
+    Args:
+        dataframe: The primary filtered DataFrame to export.
+        tab_name:  Active tab name forwarded to the column-exclusion logic
+                   so that tab-specific rules (e.g. Change Request date column
+                   removal) are applied correctly.
+
+    Returns:
+        Raw bytes of a valid ``.pdf`` file ready to be served as a download.
+    """
+    export_dataframe = remove_export_excluded_columns(dataframe, tab_name=tab_name)
     buffer = io.BytesIO()
     pdf = canvas.Canvas(buffer, pagesize=A4)
     page_width, page_height = A4
@@ -380,9 +496,9 @@ def dataframe_to_pdf_bytes(dataframe) -> bytes:
     usable_width = page_width - left_margin - right_margin
 
     max_columns = 6
-    all_columns = [str(col) for col in dataframe.columns]
+    all_columns = [str(col) for col in export_dataframe.columns]
     selected_columns = all_columns[:max_columns]
-    rows = dataframe[selected_columns].fillna("").astype(str).values.tolist() if selected_columns else []
+    rows = export_dataframe[selected_columns].fillna("").astype(str).values.tolist() if selected_columns else []
 
     def draw_page_header() -> float:
         pdf.setFillColorRGB(0.06, 0.09, 0.16)
@@ -516,7 +632,7 @@ def render_ppvr_conclusion_banner(ppvr_impact_summary: dict[str, int]) -> None:
     )
 
 
-def render_tab(tab_name: str) -> None:
+def _render_analysis_tab(tab_name: str) -> None:
     """Render one business tab and run the two-stage input evaluation.
 
     Args:
@@ -578,11 +694,17 @@ def render_tab(tab_name: str) -> None:
     ppvr_base_url = "http://127.0.0.1:11434/v1"
     ppvr_configured = True  # Local LLM is always available, but depends on Ollama being reachable.
 
+    is_change_request_tab = tab_name == "Change request"
+
     option_definitions = {
-        "Type of classification": ["Minor", "Major"],
         "Deviation Progress": ["Cancelled", "Close", "Ongoing"],
         "Root cause": ["Supplier", "Equipment", "Human cause", "Procedure"],
     }
+    if not is_change_request_tab:
+        option_definitions = {
+            "Type of classification": ["Minor", "Major"],
+            **option_definitions,
+        }
 
     binary_options = ["Summary", "Impact on PPVR"]
 
@@ -686,16 +808,23 @@ def render_tab(tab_name: str) -> None:
 
     # 6) Extract classification values from selected options and apply filter.
     classification_values = []
-    for option in selected_analysis_options:
-        if option["Option"] == "Type of classification":
-            selection_text = option["Selection"]
-            if selection_text != "No value selected":
-                classification_values = [val.strip() for val in selection_text.split(",")]
-            break
-    
-    df_after_classification, removed_classification, classification_col, classification_counts = filter_by_classification(
-        df_after_target, classification_values
-    )
+    if not is_change_request_tab:
+        for option in selected_analysis_options:
+            if option["Option"] == "Type of classification":
+                selection_text = option["Selection"]
+                if selection_text != "No value selected":
+                    classification_values = [val.strip() for val in selection_text.split(",")]
+                break
+
+    if is_change_request_tab:
+        df_after_classification = df_after_target
+        removed_classification = 0
+        classification_col = None
+        classification_counts = {}
+    else:
+        df_after_classification, removed_classification, classification_col, classification_counts = filter_by_classification(
+            df_after_target, classification_values
+        )
 
     # 7) Extract deviation progress values from selected options and apply filter.
     deviation_progress_values = []
@@ -761,14 +890,22 @@ def render_tab(tab_name: str) -> None:
     if not target_line:
         st.warning("No target line was entered. Target line filtering was skipped.")
 
-    summary_col1, summary_col2, summary_col3, summary_col4, summary_col5, summary_col6 = st.columns(6)
-    # Six KPI cards summarize the filtering outcome.
-    summary_col1.metric("Total records in file", total_rows)
-    summary_col2.metric("Removed — outside timeline", removed_timeline)
-    summary_col3.metric("Removed — no target line match", removed_target)
-    summary_col4.metric("Removed — classification filter", removed_classification)
-    summary_col5.metric("Removed — deviation progress filter", removed_deviation_progress)
-    summary_col6.metric("Records kept for analysis", len(df_final))
+    if is_change_request_tab:
+        summary_col1, summary_col2, summary_col3, summary_col4, summary_col5 = st.columns(5)
+        summary_col1.metric("Total records in file", total_rows)
+        summary_col2.metric("Removed — outside timeline", removed_timeline)
+        summary_col3.metric("Removed — no target line match", removed_target)
+        summary_col4.metric("Removed — deviation progress filter", removed_deviation_progress)
+        summary_col5.metric("Records kept for analysis", len(df_final))
+    else:
+        summary_col1, summary_col2, summary_col3, summary_col4, summary_col5, summary_col6 = st.columns(6)
+        # Six KPI cards summarize the filtering outcome.
+        summary_col1.metric("Total records in file", total_rows)
+        summary_col2.metric("Removed — outside timeline", removed_timeline)
+        summary_col3.metric("Removed — no target line match", removed_target)
+        summary_col4.metric("Removed — classification filter", removed_classification)
+        summary_col5.metric("Removed — deviation progress filter", removed_deviation_progress)
+        summary_col6.metric("Records kept for analysis", len(df_final))
 
     if len(df_final) == 0:
         st.error("No records remain after filtering. Check your timeline and target line settings.")
@@ -776,7 +913,7 @@ def render_tab(tab_name: str) -> None:
         return
 
     # Display classification breakdown if the classification column was found.
-    if classification_col and classification_counts:
+    if not is_change_request_tab and classification_col and classification_counts:
         st.markdown("#### Classification Summary")
         classification_summary = [
             {"Classification": key, "Count": value}
@@ -785,7 +922,7 @@ def render_tab(tab_name: str) -> None:
         st.table(classification_summary)
 
     # Display selected classification results if user selected specific types.
-    if classification_values and classification_col:
+    if not is_change_request_tab and classification_values and classification_col:
         st.markdown("#### Selected Classification Results")
         selected_classification_results = []
         for selected_type in classification_values:
@@ -870,7 +1007,7 @@ def render_tab(tab_name: str) -> None:
     if preferred_download_format == "Excel (.xlsx)":
         st.download_button(
             label="Download remaining records as Excel",
-            data=dataframe_to_excel_bytes(df_final, impact_sheets=impact_sheets),
+            data=dataframe_to_excel_bytes(df_final, impact_sheets=impact_sheets, tab_name=tab_name),
             file_name=f"{tab_slug}_remaining_records.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             key=f"download_excel_{tab_name}",
@@ -878,7 +1015,7 @@ def render_tab(tab_name: str) -> None:
     else:
         st.download_button(
             label="Download remaining records as PDF",
-            data=dataframe_to_pdf_bytes(df_final),
+            data=dataframe_to_pdf_bytes(df_final, tab_name=tab_name),
             file_name=f"{tab_slug}_remaining_records.pdf",
             mime="application/pdf",
             key=f"download_pdf_{tab_name}",
@@ -888,6 +1025,20 @@ def render_tab(tab_name: str) -> None:
     # Full records are still shown for traceability.
     st.dataframe(df_final, width="stretch", hide_index=True)
     section_card_end()
+
+
+def render_deviation_tab() -> None:
+    """Render the Deviation analysis workflow."""
+    _render_analysis_tab("Deviation")
+
+
+def render_change_request_tab() -> None:
+    """Render the Change request analysis workflow.
+
+    Delegates to the dedicated change_request_tab module which contains
+    all Change Request-specific logic, separate from the Deviation tab.
+    """
+    render_change_request_analysis()
 
 
 # ============================================================================
@@ -904,10 +1055,10 @@ def main() -> None:
     deviation_tab, change_request_tab = st.tabs(["Deviation", "Change request"])
 
     with deviation_tab:
-        render_tab("Deviation")
+        render_deviation_tab()
 
     with change_request_tab:
-        render_tab("Change request")
+        render_change_request_tab()
 
 
 if __name__ == "__main__":

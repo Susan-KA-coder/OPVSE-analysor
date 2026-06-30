@@ -31,20 +31,23 @@ def _normalize_header(text: str) -> str:
 
 
 def get_ppvr_text_columns(dataframe: pd.DataFrame) -> list[str]:
-	"""Return only PPVR-relevant text columns used for language modeling."""
+	"""Return only PPVR-relevant text columns used for language modeling.
+	    Args: dataframe: Input DataFrame to search for relevant columns.
+	    Returns: List of column names that are relevant for PPVR analysis.	
+		"""
 	return find_columns(
 		dataframe,
 		[
-			"description",
+			"Description",
 			"desc",
 			"details",
 			"detail",
-			"qa conclusion",
+			"QA Conclusion",
 			"qa_conclusion",
-			"qaconclusion",
+			"QAconclusion",
 			"conclusion",
-			"justification of impact",
-			"justification_of_impact",
+			"Conclusion and Justification of Impact",
+			"justification_of_impact", 
 			"impact justification",
 		],
 	)
@@ -296,39 +299,6 @@ def filter_by_target_line(
 	return dataframe[mask].reset_index(drop=True), removed
 
 
-def filter_by_classification(
-	dataframe: pd.DataFrame,
-	selected_values: list[str],
-) -> tuple[pd.DataFrame, int, str | None, dict[str, int]]:
-	"""Filter rows by classification column to match selected values (Minor/Major).
-
-	Args:
-		dataframe: Source dataset (already filtered by timeline and target line).
-		selected_values: List of classification values to keep (e.g., ["Minor", "Major"]).
-
-	Returns:
-		Tuple of (filtered_dataframe, removed_row_count, matched_column_name_or_None, classification_counts).
-	"""
-	if not selected_values:
-		return dataframe, 0, None, {}
-
-	classification_col = find_column(
-		dataframe,
-		["classification", "type of classification", "type_of_classification", "class", "type"],
-	)
-	if classification_col is None:
-		return dataframe, 0, None, {}
-
-	# Get counts before filtering
-	classification_counts = dataframe[classification_col].value_counts().to_dict()
-
-	# Create mask for rows matching selected values (case-insensitive)
-	mask = dataframe[classification_col].astype(str).str.lower().isin([val.lower() for val in selected_values])
-	removed = int((~mask).sum())
-	
-	return dataframe[mask].reset_index(drop=True), removed, classification_col, classification_counts
-
-
 def filter_by_deviation_progress(
 	dataframe: pd.DataFrame,
 	selected_values: list[str],
@@ -481,7 +451,17 @@ def evaluate_ppvr_impact_with_llm(
 	model: str,
 	base_url: str | None = None,
 ) -> tuple[dict[str, int], list[str]]:
-	"""Evaluate potential PPVR impact with an OpenAI-compatible chat model."""
+	"""Evaluate potential PPVR impact with an OpenAI-compatible chat model.
+	
+	Args:
+		dataframe: Input DataFrame containing deviation records.
+		api_key: API key for the OpenAI-compatible chat model.
+		model: Model name to use for evaluation.
+		base_url: Optional base URL for the API.
+
+	Returns:
+		Tuple containing a dictionary with PPVR impact summary and a list of relevant text columns.
+	"""
 	text_columns = get_ppvr_text_columns(dataframe)
 	if not text_columns:
 		return {}, []
@@ -544,7 +524,13 @@ def evaluate_ppvr_impact_with_local_llm(
 ) -> tuple[dict[str, int], list[str]]:
 	"""Evaluate PPVR impact with a local Ollama server via OpenAI-compatible API.
 	
+	Args:
+		dataframe: Input DataFrame containing deviation records.
+		model: Model name to use for evaluation.
+		base_url: Optional base URL for the API.
+
 	Fallback: If Ollama is unavailable, returns mock results for testing.
+	The output of this function is a tuple containing a dictionary with PPVR impact summary and a list of relevant text columns.
 	"""
 	text_columns = get_ppvr_text_columns(dataframe)
 	if not text_columns:
